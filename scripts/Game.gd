@@ -21,6 +21,7 @@ const L_PICKUP := 2    ## loose gems + weapon crates
 const L_WALL := 4      ## arena bounds
 const L_FIELD := 8     ## force-field areas (gravity/magnet/repulsor/cushion/current/reversal)
 const L_WEAPON := 16   ## the swung stone head — its own layer so weapons can CLASH with each other
+const L_WEAPON_SOLID := 32   ## the SOLID head body that physically pushes fighters (no overlap; excludes own wielder)
 
 # --- arena -----------------------------------------------------------------------
 const ARENA_SIZE := Vector2(4400.0, 3100.0)   ## a big arena — you should feel small in it
@@ -29,7 +30,7 @@ const BOT_TARGET := 13         ## how many rivals to keep alive in the arena
 
 # --- growth (the Snake.io hook) --------------------------------------------------
 const START_MASS := 1.0
-const MAX_MASS := 26.0
+const MAX_MASS := 1000000.0    ## effectively no cap — you can grow without limit (speed/agility fall off naturally)
 const GEM_MASS := 0.16         ## mass gained per gem absorbed
 const KILL_ABSORB := 0.4       ## fraction of a victim's mass the killer gains outright
 const SPILL_FRACTION := 0.75   ## fraction of a victim's mass that scatters as gems
@@ -37,7 +38,7 @@ const AMBIENT_GEMS := 120      ## free gems that drift in the arena so early gro
 
 # --- body / movement (Arthur's heavy, momentum-based feel) -----------------------
 const BASE_BODY_RADIUS := 15.0
-const BASE_MAX_SPEED := 220.0
+const BASE_MAX_SPEED := 440.0   ## overall movement speed doubled
 const SPEED_MASS_EXP := -0.32  ## bigger => slower (weight vs mobility)
 const ACCEL := 900.0           ## dead-weight pickup — slow to get going
 const FRICTION := 560.0        ## keeps drifting when you let go (momentum)
@@ -53,6 +54,7 @@ const BASE_DMG := 24.0
 const BASE_KNOCK := 480.0
 const HIT_INTERVAL := 0.32     ## a sustained-fast head re-bites the same target this often
 const INVULN := 0.18           ## i-frames after taking a hit
+const PIN_DAMAGE := 0.06       ## bonus damage per unit of knockback absorbed when a victim is pinned to a wall
 const STAMINA_MAX := 100.0
 const STAMINA_REGEN := 26.0
 const SWING_STAMINA_RATE := 20.0             ## (legacy) flat swing drain — superseded by the work model

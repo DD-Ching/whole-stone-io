@@ -56,6 +56,8 @@ func _ready() -> void:
 		_picking = true
 		Game.picking = true
 		player.set_physics_process(false)
+		player.weapon.set_solid_active(false)      # don't let the frozen player's stone shove bots while picking
+		player.weapon.set_physics_process(false)
 
 func _process(delta: float) -> void:
 	if _picking:
@@ -226,6 +228,8 @@ func _choose_weapon(t: int) -> void:
 		_picking = false
 		Game.picking = false
 		player.set_physics_process(true)
+		player.weapon.set_solid_active(true)
+		player.weapon.set_physics_process(true)
 
 # --- leaderboard ------------------------------------------------------------------
 

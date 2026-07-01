@@ -24,7 +24,7 @@ func _ready() -> void:
 	angular_damp = 4.0
 	lock_rotation = true
 	collision_layer = Game.L_PICKUP
-	collision_mask = Game.L_WALL
+	collision_mask = Game.L_WALL | Game.L_PICKUP   # gems bounce off walls and each other (no stacking)
 	_circle = CircleShape2D.new()
 	_circle.radius = 9.0
 	_shape = CollisionShape2D.new()

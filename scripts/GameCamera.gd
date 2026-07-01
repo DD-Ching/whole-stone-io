@@ -44,7 +44,7 @@ func _process(delta: float) -> void:
 	if f:
 		# Zoomed out a bit (0.82 base) so the player reads as SMALL in a BIG map, then eases
 		# further out as they grow so the ever-bigger stone still fits.
-		var z := clampf(pow(f.mass, -0.12) * 0.82, 0.45, 0.86)
+		var z := clampf(pow(f.mass, -0.12) * 0.82, 0.2, 0.86)   # low floor so a limitless giant still fits on screen
 		zoom = zoom.lerp(Vector2(z, z), clampf(3.0 * delta, 0.0, 1.0))
 	_shake = maxf(0.0, _shake - 70.0 * delta)
 	_kick = _kick.move_toward(Vector2.ZERO, 420.0 * delta)

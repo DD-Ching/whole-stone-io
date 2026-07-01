@@ -20,14 +20,17 @@ enum State { IDLE, SWING, SLAM, SPIN }
 
 # Per-type multipliers on the shared base feel. Keys: dmg, knock, reach, head,
 # stiff (spring), damp, drag, avel (angular-speed cap).
+# "mass" is the weapon's relative weight: it drives knockback/momentum, inverse swing agility,
+# and stamina cost. Hammer=1.0 (heavy), Sickle=0.5, Staff=0.1 (feather); Stone≈mid.
 const TYPES := {
-	Type.STONE:  {"dmg": 1.0,  "knock": 1.0,  "reach": 1.0,  "head": 1.0,  "stiff": 1.0,  "damp": 1.0,  "drag": 1.0,  "avel": 1.0,  "name": "STONE"},
-	Type.HAMMER: {"dmg": 1.55, "knock": 1.9,  "reach": 0.9,  "head": 1.25, "stiff": 0.8,  "damp": 1.2,  "drag": 0.9,  "avel": 0.78, "name": "HAMMER"},
-	Type.SICKLE: {"dmg": 0.85, "knock": 0.62, "reach": 1.28, "head": 0.82, "stiff": 1.3,  "damp": 0.82, "drag": 1.35, "avel": 1.4,  "name": "SICKLE"},
-	# The long pole: huge, ever-growing REACH with a small tip and low knockback. It doesn't
-	# beat spinners by a scripted rule — its reach simply pokes/holds them off, and its tip
-	# clashes with their head from outside their range (emergent counter).
-	Type.STAFF:  {"dmg": 0.95, "knock": 0.7,  "reach": 1.95, "head": 0.5,  "stiff": 1.1,  "damp": 0.9,  "drag": 1.15, "avel": 1.15, "name": "STAFF"},
+	Type.STONE:  {"dmg": 1.0,  "knock": 1.0,  "reach": 1.0,  "head": 1.0,  "stiff": 1.0,  "damp": 1.0,  "drag": 1.0,  "avel": 1.0,  "mass": 0.7, "name": "STONE"},
+	# Hammer (錘): heaviest — huge damage + knockback, but slow to swing. Best against a pinned foe.
+	Type.HAMMER: {"dmg": 1.5,  "knock": 2.0,  "reach": 0.9,  "head": 1.25, "stiff": 0.8,  "damp": 1.2,  "drag": 0.9,  "avel": 0.7,  "mass": 1.0, "name": "HAMMER"},
+	# Sickle (砍): mid weight — fast, long, wins on sustained speed; modest knockback.
+	Type.SICKLE: {"dmg": 1.05, "knock": 0.8,  "reach": 1.2,  "head": 0.85, "stiff": 1.25, "damp": 0.85, "drag": 1.3,  "avel": 1.3,  "mass": 0.5, "name": "SICKLE"},
+	# Staff/spear (槍): a feather — ~2x the rotation agility, long growing reach, almost no
+	# knockback. The shaft barely hurts; only the sharp TIP deals big damage, so you must land it.
+	Type.STAFF:  {"dmg": 2.4,  "knock": 0.45, "reach": 2.0,  "head": 0.5,  "stiff": 1.15, "damp": 0.85, "drag": 1.45, "avel": 2.0,  "mass": 0.1, "name": "STAFF"},
 }
 
 # Shared base feel (before per-type + per-mass scaling).
@@ -84,6 +87,9 @@ var _owner: Fighter
 var _hitbox: Area2D
 var _hitshape: CollisionShape2D
 var _circle: CircleShape2D
+var _solid: AnimatableBody2D       ## the physical head — shoves other fighters so nothing overlaps
+var _solid_shape: CollisionShape2D
+var _solid_circle: CircleShape2D
 
 func _ready() -> void:
 	_owner = get_parent() as Fighter
@@ -100,6 +106,22 @@ func _ready() -> void:
 	_hitshape.shape = _circle
 	_hitbox.add_child(_hitshape)
 	add_child(_hitbox)
+	# The SOLID head: a kinematic body driven to the head position each frame. It physically
+	# pushes any OTHER fighter (and is pushed against by them) so nothing overlaps — but a
+	# collision exception with our own wielder means our own weapon never blocks us.
+	_solid = AnimatableBody2D.new()
+	_solid.top_level = true
+	_solid.sync_to_physics = true
+	_solid.collision_layer = Game.L_WEAPON_SOLID
+	_solid.collision_mask = 0
+	_solid_circle = CircleShape2D.new()
+	_solid_circle.radius = _head_radius
+	_solid_shape = CollisionShape2D.new()
+	_solid_shape.shape = _solid_circle
+	_solid.add_child(_solid_shape)
+	add_child(_solid)
+	if _owner:
+		_solid.add_collision_exception_with(_owner)
 	refresh_scale(_owner.mass if _owner else 1.0)
 	_head_dist = _arm_length
 	_head_world = _head_at()
@@ -127,6 +149,8 @@ func refresh_scale(mass: float) -> void:
 	_max_avel = MAX_AVEL * float(t["avel"]) * agility
 	if _circle:
 		_circle.radius = _head_radius * 0.98
+	if _solid_circle:
+		_solid_circle.radius = _head_radius * 0.95
 
 # --- control API (shared by Player and Bot) ---------------------------------------
 
@@ -141,7 +165,7 @@ func do_slam() -> void:
 		return
 	# Cost grows with weight but is capped below the pool, so a heavy fighter can always slam
 	# from a near-full bar (a raw sqrt(mass) cost exceeded 100 stamina past mass ~11).
-	var slam_cost := minf(Game.SLAM_STAMINA * pow(maxf(_owner.mass, 0.001), 0.35), Game.STAMINA_MAX * 0.8)
+	var slam_cost := minf(Game.SLAM_STAMINA * pow(maxf(_owner.mass, 0.001), 0.35) * (0.4 + 0.6 * float(TYPES[type]["mass"])), Game.STAMINA_MAX * 0.8)
 	if not _owner.try_spend_stamina(slam_cost):
 		_owner.on_too_tired()
 		return
@@ -161,6 +185,12 @@ func set_spin(on: bool) -> void:
 	else:
 		if state == State.SPIN:
 			_change_state(State.IDLE)
+
+## Enable/disable the physical head (off while the wielder is dead so a corpse's stale
+## stone can't block the living).
+func set_solid_active(on: bool) -> void:
+	if _solid_shape:
+		_solid_shape.set_deferred("disabled", not on)
 
 func head_speed() -> float:
 	return _head_speed
@@ -220,6 +250,8 @@ func _physics_process(delta: float) -> void:
 	rotation = _angle
 	if _hitbox:
 		_hitbox.position = Vector2(_head_dist, 0.0)
+	if _solid:
+		_solid.global_position = _head_at()   # drive the physical head (top_level) to the head world pos
 	_update_trail(delta)
 	_check_clash(delta)
 	queue_redraw()
@@ -237,17 +269,29 @@ func _check_clash(delta: float) -> void:
 			continue
 		if _head_speed + ow._head_speed < CLASH_SPEED:
 			continue
-		_avel = -_avel * 0.6
+		# Two pendulum heads collide — momentum transfer by effective mass (weapon mass × wielder
+		# size). The LIGHTER weapon bounces back harder (reverses more angular velocity) and its
+		# wielder is shoved further; a heavy hammer barely flinches when a light staff hits it.
+		var my_m := _effective_mass()
+		var ow_m := ow._effective_mass()
+		var my_share := ow_m / (my_m + ow_m + 0.001)
+		_avel = -_avel * (0.25 + 0.75 * my_share)
 		_clash_cd = 0.28
 		if _owner and ow._owner:
 			var dir := (_owner.global_position - ow._owner.global_position).normalized()
-			_owner.lunge(dir * 170.0)
-			_owner.on_hit_feedback(14.0, dir, false)   # pass a UNIT dir — a full impulse here flung the camera
+			var shove := clampf(ow_m * (ow._head_speed + 200.0) / maxf(my_m, 0.05) * 0.02, 40.0, 320.0)
+			_owner.lunge(dir * shove)
+			_owner.on_hit_feedback(clampf(shove * 0.08, 8.0, 22.0), dir, false)
 			# Both weapons run this each frame — emit the shared popup from just one side.
 			if _owner.get_instance_id() < ow._owner.get_instance_id():
 				var mid := (_head_at() + ow._head_at()) * 0.5
 				Game.popup("CLASH!", mid + Vector2(0, -18), Color(1.0, 0.95, 0.7), 1.15)
 		break
+
+## The head's effective mass = weapon type weight × wielder size (bigger fighter = heavier head).
+func _effective_mass() -> float:
+	var wm: float = float(TYPES[type]["mass"])
+	return wm * sqrt(maxf(_owner.mass, 0.001)) if _owner else wm
 
 func _update_pendulum(delta: float, accel: Vector2) -> void:
 	var diff := wrapf(_target_aim - _angle, -PI, PI)
@@ -264,7 +308,8 @@ func _update_pendulum(delta: float, accel: Vector2) -> void:
 		var applied := _aim_avel * _drag
 		if _swinging:
 			var opposing := REDIRECT_COST if (not is_zero_approx(_avel) and signf(applied) != signf(_avel)) else 1.0
-			var cost := absf(applied) * sqrt(maxf(_owner.mass, 0.001)) * Game.SWING_STAMINA_PER_TORQUE * opposing * delta
+			var wmass := 0.3 + float(TYPES[type]["mass"])   # heavy weapon = more effort; a light staff whips cheaply
+			var cost := absf(applied) * sqrt(maxf(_owner.mass, 0.001)) * wmass * Game.SWING_STAMINA_PER_TORQUE * opposing * delta
 			if _owner.try_spend_stamina(cost):
 				torque += applied
 			else:
@@ -329,7 +374,7 @@ func _do_slam_impact() -> void:
 	_owner.on_hit_feedback(26.0, Vector2.RIGHT.rotated(_target_aim), true)
 
 func _process_spin(delta: float) -> void:
-	if not _owner.try_spend_stamina(Game.SPIN_STAMINA_RATE * pow(maxf(_owner.mass, 0.001), 0.35) * delta):
+	if not _owner.try_spend_stamina(Game.SPIN_STAMINA_RATE * pow(maxf(_owner.mass, 0.001), 0.35) * (0.4 + 0.6 * float(TYPES[type]["mass"])) * delta):
 		_owner.on_too_tired()
 		_change_state(State.IDLE)
 		return
@@ -391,6 +436,12 @@ func _score_hit(victim: Fighter, speed: float, is_spin: bool) -> void:
 	var dir: Vector2 = (victim.global_position - _owner.global_position).normalized()
 	if dir == Vector2.ZERO:
 		dir = Vector2.RIGHT.rotated(_angle)
+	# WALL-PIN: if the victim can't fly back (a wall behind them), the knockback that would
+	# have become motion becomes DAMAGE instead — so hammering a foe into a wall hurts far more
+	# than knocking them into open space. High-knockback weapons benefit most.
+	if victim.is_pinned(dir):
+		dmg += knock * Game.PIN_DAMAGE
+		Game.popup("PINNED!", victim.global_position + Vector2(0, -victim.body_radius - 16.0), Color(1.0, 0.55, 0.3), 1.1)
 	var died := victim.take_damage(dmg, dir, knock)
 	var shake := clampf(speed_factor * (18.0 if is_spin else 26.0), 6.0, 44.0)
 	_owner.on_hit_feedback(shake * (0.5 if is_spin else 1.0), dir, false)

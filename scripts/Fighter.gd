@@ -50,7 +50,9 @@ var _collector_circle: CircleShape2D
 func _ready() -> void:
 	add_to_group("fighter")
 	collision_layer = Game.L_FIGHTER
-	collision_mask = Game.L_WALL            # slide on walls only; fighters pass through each other
+	# Solid: collide with other fighters (no overlap), walls, and enemy weapon heads (which
+	# physically shove us). Our OWN weapon adds a collision exception, so it never blocks us.
+	collision_mask = Game.L_FIGHTER | Game.L_WALL | Game.L_WEAPON_SOLID
 
 	_circle = CircleShape2D.new()
 	_shape = CollisionShape2D.new()
@@ -182,6 +184,18 @@ func lunge(v: Vector2) -> void:
 func make_invulnerable(t: float) -> void:
 	_invuln = maxf(_invuln, t)
 
+## True if a wall is right behind us in the given direction — i.e. we can't be knocked back,
+## so a hit lands with extra force (wall-pin). A real physics raycast, run during _physics_process.
+func is_pinned(dir: Vector2) -> bool:
+	if dir == Vector2.ZERO:
+		return false
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return false
+	var q := PhysicsRayQueryParameters2D.create(global_position, global_position + dir.normalized() * (body_radius + 26.0))
+	q.collision_mask = Game.L_WALL
+	return not space.intersect_ray(q).is_empty()
+
 func try_spend_stamina(cost: float) -> bool:
 	if not uses_stamina:
 		return true
@@ -258,6 +272,7 @@ func spawn_setup(pos: Vector2, m: float, nm: String, col: Color) -> void:
 		if is_player:
 			weapon.set_type(Weapon.Type.STONE)   # every life starts fresh with the boulder
 		weapon.reset()
+		weapon.set_solid_active(true)
 		weapon.set_physics_process(true)          # _die() paused it; bring it back
 	show()
 	set_physics_process(true)
@@ -274,6 +289,7 @@ func _die() -> void:
 	_dead = true
 	if weapon:
 		weapon.reset()                   # settle it out of SPIN/SWING so it can't hit while dead
+		weapon.set_solid_active(false)   # a corpse's stone shouldn't keep blocking the living
 		weapon.set_physics_process(false)
 	_spill_loot()
 	died.emit(self)
