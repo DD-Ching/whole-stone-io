@@ -42,7 +42,9 @@ func snap() -> void:
 func _process(delta: float) -> void:
 	var f := get_parent() as Fighter
 	if f:
-		var z := clampf(pow(f.mass, -0.13), 0.52, 1.0)
+		# Zoomed out a bit (0.82 base) so the player reads as SMALL in a BIG map, then eases
+		# further out as they grow so the ever-bigger stone still fits.
+		var z := clampf(pow(f.mass, -0.12) * 0.82, 0.45, 0.86)
 		zoom = zoom.lerp(Vector2(z, z), clampf(3.0 * delta, 0.0, 1.0))
 	_shake = maxf(0.0, _shake - 70.0 * delta)
 	_kick = _kick.move_toward(Vector2.ZERO, 420.0 * delta)

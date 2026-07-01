@@ -105,7 +105,10 @@ func _integrate(delta: float) -> void:
 	move_and_slide()
 
 ## Accumulate an environmental acceleration this frame (force fields, terrain gradient).
+## Ignored while frozen (dead / picking a weapon) so it can't pile up and fling us on unfreeze.
 func apply_env_force(accel: Vector2, delta: float) -> void:
+	if _dead or not is_physics_processing():
+		return
 	_env += accel * delta
 
 ## A counter/cushion zone flings this body's momentum back (reflect), plus a shove out.
@@ -174,6 +177,10 @@ func take_damage(amount: float, dir: Vector2, knockback: float) -> bool:
 
 func lunge(v: Vector2) -> void:
 	_impulse = (_impulse + v).limit_length(1400.0)
+
+## Grant/extend i-frames (used to shield the player while the weapon picker is up).
+func make_invulnerable(t: float) -> void:
+	_invuln = maxf(_invuln, t)
 
 func try_spend_stamina(cost: float) -> bool:
 	if not uses_stamina:

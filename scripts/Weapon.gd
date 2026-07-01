@@ -15,7 +15,7 @@ extends Node2D
 ## Built entirely in code (its Area2D hitbox is spawned in _ready), so an entity is
 ## just "attach Weapon as a child of a Fighter" with no scene wiring.
 
-enum Type { STONE, HAMMER, SICKLE }
+enum Type { STONE, HAMMER, SICKLE, STAFF }
 enum State { IDLE, SWING, SLAM, SPIN }
 
 # Per-type multipliers on the shared base feel. Keys: dmg, knock, reach, head,
@@ -24,6 +24,10 @@ const TYPES := {
 	Type.STONE:  {"dmg": 1.0,  "knock": 1.0,  "reach": 1.0,  "head": 1.0,  "stiff": 1.0,  "damp": 1.0,  "drag": 1.0,  "avel": 1.0,  "name": "STONE"},
 	Type.HAMMER: {"dmg": 1.55, "knock": 1.9,  "reach": 0.9,  "head": 1.25, "stiff": 0.8,  "damp": 1.2,  "drag": 0.9,  "avel": 0.78, "name": "HAMMER"},
 	Type.SICKLE: {"dmg": 0.85, "knock": 0.62, "reach": 1.28, "head": 0.82, "stiff": 1.3,  "damp": 0.82, "drag": 1.35, "avel": 1.4,  "name": "SICKLE"},
+	# The long pole: huge, ever-growing REACH with a small tip and low knockback. It doesn't
+	# beat spinners by a scripted rule — its reach simply pokes/holds them off, and its tip
+	# clashes with their head from outside their range (emergent counter).
+	Type.STAFF:  {"dmg": 0.95, "knock": 0.7,  "reach": 1.95, "head": 0.5,  "stiff": 1.1,  "damp": 0.9,  "drag": 1.15, "avel": 1.15, "name": "STAFF"},
 }
 
 # Shared base feel (before per-type + per-mass scaling).
@@ -43,6 +47,7 @@ const SPIN_HIT_INTERVAL := 0.45
 const SPIN_SPEED_REF := 560.0  ## the whirl reads as this head speed for damage
 const PICKUP_FLING := 2.4      ## impulse multiplier when the head bats a loose gem
 const CLASH_SPEED := 620.0     ## combined head speed above which two swung stones CLASH and bounce apart
+const REDIRECT_COST := 2.2     ## stamina multiplier when the whip fights the head's current spin (redirecting is hard work)
 
 var type: int = Type.STONE
 var state: int = State.IDLE
@@ -134,7 +139,10 @@ func set_swinging(on: bool) -> void:
 func do_slam() -> void:
 	if state == State.SLAM:
 		return
-	if not _owner.try_spend_stamina(Game.SLAM_STAMINA):
+	# Cost grows with weight but is capped below the pool, so a heavy fighter can always slam
+	# from a near-full bar (a raw sqrt(mass) cost exceeded 100 stamina past mass ~11).
+	var slam_cost := minf(Game.SLAM_STAMINA * pow(maxf(_owner.mass, 0.001), 0.35), Game.STAMINA_MAX * 0.8)
+	if not _owner.try_spend_stamina(slam_cost):
 		_owner.on_too_tired()
 		return
 	_slam_struck = false
@@ -250,10 +258,19 @@ func _update_pendulum(delta: float, accel: Vector2) -> void:
 	# real speed. A committed swing (button held) applies it in full and costs stamina;
 	# otherwise a weaker passive whip still lets a flick land.
 	if absf(_aim_avel) > 0.2:
-		if _swinging and _owner.try_spend_stamina(Game.SWING_STAMINA_RATE * delta):
-			torque += _aim_avel * _drag
+		# The whip torque you apply. Stamina spent = that force × head weight × how much you're
+		# fighting the head's momentum (redirecting costs more than adding to the spin) — i.e.
+		# real WORK, not a flat cost for holding the button.
+		var applied := _aim_avel * _drag
+		if _swinging:
+			var opposing := REDIRECT_COST if (not is_zero_approx(_avel) and signf(applied) != signf(_avel)) else 1.0
+			var cost := absf(applied) * sqrt(maxf(_owner.mass, 0.001)) * Game.SWING_STAMINA_PER_TORQUE * opposing * delta
+			if _owner.try_spend_stamina(cost):
+				torque += applied
+			else:
+				torque += applied * PASSIVE_DRAG   # too tired to commit — only the weak passive whip
 		else:
-			torque += _aim_avel * _drag * PASSIVE_DRAG
+			torque += applied * PASSIVE_DRAG
 	_avel = clampf(_avel + torque * delta, -_max_avel, _max_avel)
 	_angle = wrapf(_angle + _avel * delta, -PI, PI)
 	# A little stretch + lift under speed sells the whip.
@@ -312,7 +329,7 @@ func _do_slam_impact() -> void:
 	_owner.on_hit_feedback(26.0, Vector2.RIGHT.rotated(_target_aim), true)
 
 func _process_spin(delta: float) -> void:
-	if not _owner.try_spend_stamina(Game.SPIN_STAMINA_RATE * delta):
+	if not _owner.try_spend_stamina(Game.SPIN_STAMINA_RATE * pow(maxf(_owner.mass, 0.001), 0.35) * delta):
 		_owner.on_too_tired()
 		_change_state(State.IDLE)
 		return
@@ -432,6 +449,8 @@ func _draw() -> void:
 			_draw_hammer(head, r, speed_t)
 		Type.SICKLE:
 			_draw_sickle(head, r, speed_t)
+		Type.STAFF:
+			_draw_staff(head, r, speed_t)
 		_:
 			_draw_stone(head, r, speed_t, base_col)
 
@@ -457,6 +476,14 @@ func _draw_hammer(head: Vector2, r: float, speed_t: float) -> void:
 	draw_rect(rect, col)
 	draw_rect(rect, Color(0.15, 0.14, 0.16), false, 3.0)
 	draw_rect(Rect2(head - Vector2(w * 0.5, h * 0.5), Vector2(w * 0.28, h)), col.darkened(0.2))
+
+func _draw_staff(head: Vector2, r: float, speed_t: float) -> void:
+	var col := Color(0.72, 0.74, 0.8).lerp(Color(1.0, 0.6, 0.3), speed_t * 0.7)
+	var tip := head + Vector2(r * 2.2, 0.0)
+	draw_line(head - Vector2(r * 0.6, 0.0), tip, col, 5.0)         # reinforced far end of the pole
+	draw_circle(head, r * 0.7, Color(0.36, 0.3, 0.24))            # collar
+	# spearhead that does the poking
+	draw_colored_polygon(PackedVector2Array([tip, head + Vector2(r * 0.9, -r * 0.7), head + Vector2(r * 0.9, r * 0.7)]), col)
 
 func _draw_sickle(head: Vector2, r: float, speed_t: float) -> void:
 	var col := Color(0.78, 0.8, 0.88).lerp(Color(1.0, 0.6, 0.3), speed_t * 0.7)
