@@ -2,6 +2,8 @@
 
 > Arthur couldn't pull the sword from the stone… so he lifted the **entire stone**.
 
+### ▶ [Play it in your browser](https://dd-ching.github.io/whole-stone-io/) — no install, Godot 4 WebGL build
+
 A 2D top-down, physics-driven **.io brawler** built in **Godot 4.7**. You are the
 chosen one who flunked the test: instead of a sword, you swing a whole boulder on the
 end of your arm — a heavy, spring-damped pendulum you *whip* by dragging the mouse.
@@ -61,6 +63,15 @@ godot --path . scenes/Main.tscn
 ```
 
 Or open the folder from the Godot Project Manager and hit **Play**.
+
+**Web build:** the live version is a Godot HTML5/WebGL export (single-threaded, so it
+runs on GitHub Pages without special headers). To rebuild it:
+
+```bash
+godot --headless --path . --export-release "Web" build/web/index.html
+```
+
+The exported `build/web/` is published to the `gh-pages` branch.
 
 ## How it's built
 
