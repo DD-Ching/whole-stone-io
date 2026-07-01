@@ -30,12 +30,19 @@ func _ready() -> void:
 	Game.player_died.connect(_on_died)
 	Game.player_spawned.connect(func(): _dead = false)
 
+var _tc: Node = null
+
 func bind(p: Fighter) -> void:
 	player = p
 	# Seed from the autoload: the player's first score was emitted before we connected.
 	_score = Game.score
 	_best = Game.best
 	_kills = Game.kills
+
+func _touch_on() -> bool:
+	if _tc == null or not is_instance_valid(_tc):
+		_tc = get_tree().get_first_node_in_group("touch_controls")
+	return _tc != null and _tc.enabled
 
 func _on_score(s: int, b: int) -> void:
 	_score = s
@@ -88,16 +95,27 @@ func _draw() -> void:
 		var hf := clampf(player.health / player.max_health, 0.0, 1.0)
 		draw_rect(Rect2(bx, by + 18, bw * hf, 12), Color(0.4, 0.85, 0.45).lerp(Color(0.9, 0.35, 0.3), 1.0 - hf))
 
-	var hint := "WASD move   •   drag MOUSE to whip the stone   •   LMB swing   •   RMB slam   •   SPACE whirl"
+	var touch := _touch_on()
+	var hint := "LEFT stick move   •   RIGHT stick to whip the stone   •   SLAM / WHIRL buttons" if touch \
+		else "WASD move   •   drag MOUSE to whip the stone   •   LMB swing   •   RMB slam   •   SPACE whirl"
 	var hw := _font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-	_text(hint, Vector2(vp.x * 0.5 - hw * 0.5, vp.y - 14), 14, Color(0.75, 0.75, 0.8))
+	# Keep the hint clear of the on-screen sticks/buttons on phones.
+	var hint_y := (vp.y - 150.0) if touch else (vp.y - 14.0)
+	_text(hint, Vector2(vp.x * 0.5 - hw * 0.5, hint_y), 14, Color(0.75, 0.75, 0.8))
 
 	# --- death overlay ---
 	if _dead:
 		draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.55))
 		_center("YOU GOT SMASHED", vp, -70, 46, Color(1, 0.5, 0.45))
 		_center("Final size %d   •   You finished #%d" % [_final_score, _final_rank], vp, -8, 22, Color(1, 0.95, 0.8))
-		_center("Press  R  or  CLICK  to lift the stone again", vp, 44, 20, Color(0.85, 0.9, 1.0))
+		var rehint := "TAP to lift the stone again" if touch else "Press  R  or  CLICK  to lift the stone again"
+		_center(rehint, vp, 44, 20, Color(0.85, 0.9, 1.0))
+
+	# --- portrait nudge (phones): the game is landscape-first ---
+	if touch and vp.x < vp.y:
+		draw_rect(Rect2(Vector2.ZERO, vp), Color(0.055, 0.055, 0.08, 0.96))
+		_center("ROTATE YOUR DEVICE", vp, -20, 30, Color(1, 0.95, 0.75))
+		_center("to landscape to play", vp, 20, 22, Color(0.85, 0.85, 0.92))
 
 func _text(s: String, pos: Vector2, size: int, col: Color) -> void:
 	draw_string(_font, pos + Vector2(1.5, 1.5), s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, 0.55))

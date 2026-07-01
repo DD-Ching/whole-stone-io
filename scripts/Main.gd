@@ -13,6 +13,7 @@ const GEM_HARD_CAP := 500     ## bound the loose-gem RigidBody count over very l
 
 var player: Player
 var hud: Hud
+var touch: TouchControls
 
 var _half := Game.ARENA_SIZE * 0.5
 var _board_cd := 0.0
@@ -40,12 +41,15 @@ func _ready() -> void:
 	hud = Hud.new()
 	layer.add_child(hud)
 	hud.bind(player)
+	# On-screen controls for phones (auto-shown only when a touchscreen is present).
+	touch = TouchControls.new()
+	layer.add_child(touch)
 
 	queue_redraw()   # the static grid/border draws once and persists
 
 func _process(delta: float) -> void:
 	if _awaiting_respawn:
-		if Input.is_action_just_pressed("respawn") or Input.is_action_just_pressed("attack"):
+		if Input.is_action_just_pressed("respawn") or Input.is_action_just_pressed("attack") or (touch != null and touch.consume_tap()):
 			_respawn_player()
 		return
 
@@ -147,6 +151,8 @@ func _on_fighter_died(who: Fighter) -> void:
 		player.hide()
 		player.set_physics_process(false)
 		_awaiting_respawn = true
+		if touch != null:
+			touch.consume_tap()   # flush any taps from before death so we don't insta-respawn
 	else:
 		who.queue_free()
 
