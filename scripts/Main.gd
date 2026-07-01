@@ -21,6 +21,8 @@ var _crate_cd := CRATE_INTERVAL
 var _gem_cd := GEM_TOPUP_INTERVAL
 var _spawn_cd := 0.0
 var _awaiting_respawn := false
+var _picking := false
+var _chosen_weapon := Weapon.Type.STONE
 
 func _ready() -> void:
 	Game.reset_run()
@@ -36,7 +38,8 @@ func _ready() -> void:
 	for i in range(Game.BOT_TARGET):
 		_spawn_bot()
 
-	_spawn_fields()
+	# Force-field zones are shelved for now (kept in ForceField.gd for later) — the terrain
+	# is the focus. Re-enable with _spawn_fields() when we come back to them.
 
 	# HUD in its own CanvasLayer so it's screen-space, independent of the camera zoom.
 	var layer := CanvasLayer.new()
@@ -48,9 +51,17 @@ func _ready() -> void:
 	touch = TouchControls.new()
 	layer.add_child(touch)
 
-	queue_redraw()   # the static grid/border draws once and persists
+	# Dev weapon picker at the start (desktop). On touch we just default to the Stone.
+	if not touch.enabled:
+		_picking = true
+		Game.picking = true
+		player.set_physics_process(false)
 
 func _process(delta: float) -> void:
+	if _picking:
+		if player != null and is_instance_valid(player):
+			player.make_invulnerable(0.3)   # shielded + frozen while you choose a weapon
+		return
 	if _awaiting_respawn:
 		if Input.is_action_just_pressed("respawn") or Input.is_action_just_pressed("attack") or (touch != null and touch.consume_tap()):
 			_respawn_player()
@@ -132,13 +143,12 @@ func _topup_gems() -> void:
 		g.setup(_rand_pos(), Game.GEM_MASS, Pickup.Kind.GEM, Game.random_color())
 
 func _spawn_fields() -> void:
+	# A light sprinkle only — the terrain is the star now; fields are seasoning.
 	var kinds := [
 		ForceField.Kind.GRAVITY, ForceField.Kind.MAGNET, ForceField.Kind.REPULSOR,
 		ForceField.Kind.CUSHION, ForceField.Kind.CURRENT, ForceField.Kind.REVERSAL,
 	]
-	for k in kinds:            # one of every kind…
-		_add_field(k)
-	for i in range(3):         # …plus a few extra at random
+	for i in range(4):
 		_add_field(kinds[Game.rng().randi() % kinds.size()])
 
 func _add_field(kind: int) -> void:
@@ -152,7 +162,7 @@ func _add_field(kind: int) -> void:
 	f.setup(kind, pos, Game.rng().randf_range(190.0, 300.0), Vector2.RIGHT.rotated(Game.rng().randf() * TAU))
 
 func _rand_weapon_type() -> int:
-	var pool := [Weapon.Type.STONE, Weapon.Type.HAMMER, Weapon.Type.SICKLE]
+	var pool := [Weapon.Type.STONE, Weapon.Type.HAMMER, Weapon.Type.SICKLE, Weapon.Type.STAFF]
 	return pool[Game.rng().randi() % pool.size()]
 
 func _rand_pos() -> Vector2:
@@ -191,7 +201,31 @@ func _respawn_player() -> void:
 	_awaiting_respawn = false
 	Game.reset_run()
 	player.spawn_setup(_rand_pos(), Game.START_MASS, "You", Color("f4e6b4"))
+	player.weapon.set_type(_chosen_weapon)   # keep the weapon you picked
 	Game.player_spawned.emit()
+
+## Dev: number keys 1-4 pick / switch the player's weapon at any time.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		var t := -1
+		match event.keycode:
+			KEY_1: t = Weapon.Type.STONE
+			KEY_2: t = Weapon.Type.HAMMER
+			KEY_3: t = Weapon.Type.SICKLE
+			KEY_4: t = Weapon.Type.STAFF
+		if t != -1:
+			_choose_weapon(t)
+
+func _choose_weapon(t: int) -> void:
+	if player == null or not is_instance_valid(player) or player.is_dead():
+		return
+	_chosen_weapon = t
+	player.weapon.set_type(t)
+	Game.popup(player.weapon.type_name() + "!", player.global_position + Vector2(0, -player.body_radius - 24.0), Color(1, 0.9, 0.5), 1.2)
+	if _picking:
+		_picking = false
+		Game.picking = false
+		player.set_physics_process(true)
 
 # --- leaderboard ------------------------------------------------------------------
 
@@ -243,15 +277,4 @@ func _add_wall(pos: Vector2, size: Vector2) -> void:
 	add_child(body)
 
 func _draw() -> void:
-	# A faint grid + a bright border so the big arena reads and you feel your speed.
-	var step := 160.0
-	var grid := Color(1, 1, 1, 0.045)
-	var x := -_half.x
-	while x <= _half.x:
-		draw_line(Vector2(x, -_half.y), Vector2(x, _half.y), grid, 1.0)
-		x += step
-	var y := -_half.y
-	while y <= _half.y:
-		draw_line(Vector2(-_half.x, y), Vector2(_half.x, y), grid, 1.0)
-		y += step
-	draw_rect(Rect2(-_half, Game.ARENA_SIZE), Color(0.5, 0.45, 0.7, 0.8), false, 6.0)
+	pass   # the ground + boundary are drawn by Terrain now (shaded elevation + contours)

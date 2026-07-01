@@ -117,6 +117,14 @@ func _draw() -> void:
 		_center("ROTATE YOUR DEVICE", vp, -20, 30, Color(1, 0.95, 0.75))
 		_center("to landscape to play", vp, 20, 22, Color(0.85, 0.85, 0.92))
 
+	# --- start weapon picker (desktop dev) ---
+	if Game.picking:
+		draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.6))
+		_center("WHOLE STONE .io", vp, -120, 40, Color(1, 0.9, 0.55))
+		_center("Choose your weapon", vp, -68, 24, Color(1, 0.95, 0.85))
+		_center("[1] STONE     [2] HAMMER     [3] SICKLE     [4] STAFF", vp, -16, 22, Color(0.85, 0.9, 1.0))
+		_center("press 1-4   (you can switch anytime — dev)", vp, 24, 15, Color(0.7, 0.72, 0.82))
+
 func _text(s: String, pos: Vector2, size: int, col: Color) -> void:
 	draw_string(_font, pos + Vector2(1.5, 1.5), s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, 0.55))
 	draw_string(_font, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)

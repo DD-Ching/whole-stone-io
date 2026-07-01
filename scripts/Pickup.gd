@@ -92,6 +92,8 @@ func _crate_color() -> Color:
 			return Color("c56a3a")
 		Weapon.Type.SICKLE:
 			return Color("6aa8c5")
+		Weapon.Type.STAFF:
+			return Color("9a8a5a")
 		_:
 			return Color("8a8a92")
 
@@ -101,5 +103,7 @@ func _crate_letter() -> String:
 			return "H"
 		Weapon.Type.SICKLE:
 			return "S"
+		Weapon.Type.STAFF:
+			return "P"
 		_:
 			return "O"

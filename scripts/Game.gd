@@ -23,9 +23,9 @@ const L_FIELD := 8     ## force-field areas (gravity/magnet/repulsor/cushion/cur
 const L_WEAPON := 16   ## the swung stone head — its own layer so weapons can CLASH with each other
 
 # --- arena -----------------------------------------------------------------------
-const ARENA_SIZE := Vector2(3400.0, 2400.0)
+const ARENA_SIZE := Vector2(4400.0, 3100.0)   ## a big arena — you should feel small in it
 const WALL_THICK := 120.0
-const BOT_TARGET := 11         ## how many rivals to keep alive in the arena
+const BOT_TARGET := 13         ## how many rivals to keep alive in the arena
 
 # --- growth (the Snake.io hook) --------------------------------------------------
 const START_MASS := 1.0
@@ -33,7 +33,7 @@ const MAX_MASS := 26.0
 const GEM_MASS := 0.16         ## mass gained per gem absorbed
 const KILL_ABSORB := 0.4       ## fraction of a victim's mass the killer gains outright
 const SPILL_FRACTION := 0.75   ## fraction of a victim's mass that scatters as gems
-const AMBIENT_GEMS := 90       ## free gems that drift in the arena so early growth is easy
+const AMBIENT_GEMS := 120      ## free gems that drift in the arena so early growth is easy
 
 # --- body / movement (Arthur's heavy, momentum-based feel) -----------------------
 const BASE_BODY_RADIUS := 15.0
@@ -55,14 +55,16 @@ const HIT_INTERVAL := 0.32     ## a sustained-fast head re-bites the same target
 const INVULN := 0.18           ## i-frames after taking a hit
 const STAMINA_MAX := 100.0
 const STAMINA_REGEN := 26.0
-const SWING_STAMINA_RATE := 20.0
-const SLAM_STAMINA := 34.0
-const SPIN_STAMINA_RATE := 30.0
+const SWING_STAMINA_RATE := 20.0             ## (legacy) flat swing drain — superseded by the work model
+const SWING_STAMINA_PER_TORQUE := 0.5        ## stamina per unit of applied whip torque × sqrt(mass) (the "how much force" model)
+const SLAM_STAMINA := 30.0
+const SPIN_STAMINA_RATE := 26.0
 
 # --- run state -------------------------------------------------------------------
 var score := 0
 var best := 0
 var kills := 0
+var picking := false   ## true while the start weapon-picker overlay is up
 
 const NAMES := [
 	"Percival", "Gawain", "Lancelot", "Bors", "Kay", "Bedivere", "Tristan",
