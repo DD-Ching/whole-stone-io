@@ -282,8 +282,8 @@ func _check_clash(delta: float) -> void:
 			var shove := clampf(ow_m * (ow._head_speed + 200.0) / maxf(my_m, 0.05) * 0.02, 40.0, 320.0)
 			_owner.lunge(dir * shove)
 			_owner.on_hit_feedback(clampf(shove * 0.08, 8.0, 22.0), dir, false)
-			# Both weapons run this each frame — emit the shared popup from just one side.
-			if _owner.get_instance_id() < ow._owner.get_instance_id():
+			# Both weapons run this each frame — emit one shared popup, only if the player is involved.
+			if (_owner.is_player or ow._owner.is_player) and _owner.get_instance_id() < ow._owner.get_instance_id():
 				var mid := (_head_at() + ow._head_at()) * 0.5
 				Game.popup("CLASH!", mid + Vector2(0, -18), Color(1.0, 0.95, 0.7), 1.15)
 		break
@@ -370,7 +370,8 @@ func _do_slam_impact() -> void:
 		if pd <= radius * 1.4 and p.has_method("fling"):
 			var pdir: Vector2 = (p.global_position - point).normalized()
 			p.fling(pdir * (radius - pd) * 3.0)
-	Game.popup("SMASH!", point + Vector2(0, -30), Color(1.0, 0.82, 0.4), 1.3)
+	if _owner.is_player:
+		Game.popup("SMASH!", point + Vector2(0, -30), Color(1.0, 0.82, 0.4), 1.3)
 	_owner.on_hit_feedback(26.0, Vector2.RIGHT.rotated(_target_aim), true)
 
 func _process_spin(delta: float) -> void:
@@ -436,12 +437,14 @@ func _score_hit(victim: Fighter, speed: float, is_spin: bool) -> void:
 	var dir: Vector2 = (victim.global_position - _owner.global_position).normalized()
 	if dir == Vector2.ZERO:
 		dir = Vector2.RIGHT.rotated(_angle)
+	var show_pop: bool = _owner.is_player or victim.is_player   # skip bot-vs-bot popups (churn + clutter)
 	# WALL-PIN: if the victim can't fly back (a wall behind them), the knockback that would
 	# have become motion becomes DAMAGE instead — so hammering a foe into a wall hurts far more
 	# than knocking them into open space. High-knockback weapons benefit most.
 	if victim.is_pinned(dir):
 		dmg += knock * Game.PIN_DAMAGE
-		Game.popup("PINNED!", victim.global_position + Vector2(0, -victim.body_radius - 16.0), Color(1.0, 0.55, 0.3), 1.1)
+		if show_pop:
+			Game.popup("PINNED!", victim.global_position + Vector2(0, -victim.body_radius - 16.0), Color(1.0, 0.55, 0.3), 1.1)
 	var died := victim.take_damage(dmg, dir, knock)
 	var shake := clampf(speed_factor * (18.0 if is_spin else 26.0), 6.0, 44.0)
 	_owner.on_hit_feedback(shake * (0.5 if is_spin else 1.0), dir, false)
@@ -451,8 +454,8 @@ func _score_hit(victim: Fighter, speed: float, is_spin: bool) -> void:
 		_owner.lunge(dir * nudge)
 	if died:
 		_owner.on_scored_kill(victim)
-	elif not is_spin:
-		Game.popup("BONK!", victim.global_position + Vector2(0, -victim.body_radius - 12.0), t["color"] if t.has("color") else Color(1, 0.95, 0.7), 0.9)
+	elif not is_spin and show_pop:
+		Game.popup("BONK!", victim.global_position + Vector2(0, -victim.body_radius - 12.0), Color(1, 0.95, 0.7), 0.9)
 
 func _head_at() -> Vector2:
 	return global_position + Vector2(_head_dist, 0.0).rotated(rotation)

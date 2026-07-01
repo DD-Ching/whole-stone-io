@@ -9,7 +9,7 @@ extends Node2D
 const CRATE_INTERVAL := 9.0
 const CRATE_CAP := 4
 const GEM_TOPUP_INTERVAL := 2.0
-const GEM_HARD_CAP := 500     ## bound the loose-gem RigidBody count over very long sessions
+const GEM_HARD_CAP := 220     ## bound the loose-gem RigidBody count over very long sessions
 
 var player: Player
 var hud: Hud

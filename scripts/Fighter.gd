@@ -229,8 +229,8 @@ func on_hit_feedback(_shake: float, _dir: Vector2, _big: bool) -> void:
 ## The wielder just felled `victim` — claim a chunk of its mass outright.
 func on_scored_kill(victim: Fighter) -> void:
 	grow(victim.mass * Game.KILL_ABSORB)
-	Game.popup("KO!", global_position + Vector2(0, -body_radius - 20.0), Color(1.0, 0.85, 0.3), 1.4)
 	if is_player:
+		Game.popup("KO!", global_position + Vector2(0, -body_radius - 20.0), Color(1.0, 0.85, 0.3), 1.4)
 		Game.add_kill()
 
 func grow(amount: float) -> void:

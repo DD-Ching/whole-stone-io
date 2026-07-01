@@ -34,7 +34,7 @@ const MAX_MASS := 1000000.0    ## effectively no cap — you can grow without li
 const GEM_MASS := 0.16         ## mass gained per gem absorbed
 const KILL_ABSORB := 0.4       ## fraction of a victim's mass the killer gains outright
 const SPILL_FRACTION := 0.75   ## fraction of a victim's mass that scatters as gems
-const AMBIENT_GEMS := 120      ## free gems that drift in the arena so early growth is easy
+const AMBIENT_GEMS := 80       ## free gems in the arena (kept modest for perf)
 
 # --- body / movement (Arthur's heavy, momentum-based feel) -----------------------
 const BASE_BODY_RADIUS := 15.0

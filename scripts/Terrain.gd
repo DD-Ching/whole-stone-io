@@ -11,7 +11,6 @@ extends Node2D
 const BASE_AMP := 165.0
 const RIDGE_AMP := 55.0         ## kept small — a hint of ridges, not busy detail
 const TERRAIN_G := 300.0        ## downhill acceleration scale for fighters
-const PICKUP_G := 210.0         ## gentler downhill pull for loose gems
 const STEP := 92.0              ## coarse grid — big smooth landforms, not fine detail
 
 var _base := FastNoiseLite.new()
@@ -74,14 +73,13 @@ func height_at(p: Vector2) -> float:
 	return h
 
 func _physics_process(delta: float) -> void:
+	# Only fighters feel the downhill pull. Gems are deliberately NOT pushed every frame so the
+	# RigidBodies can go to sleep once settled (a constant force would keep them awake = stutter).
 	for f in get_tree().get_nodes_in_group("fighter"):
 		var fi := f as Fighter
 		if fi == null or fi.is_dead():
 			continue
 		fi.apply_env_force(-_grid_gradient(fi.global_position) * TERRAIN_G, delta)
-	for p in get_tree().get_nodes_in_group("pickup"):
-		if p is Pickup and is_instance_valid(p):
-			p.apply_env_force(-_grid_gradient((p as Pickup).global_position) * PICKUP_G, delta)
 
 ## Downhill slope from the precomputed grid (cheap; no per-frame noise sampling).
 func _grid_gradient(p: Vector2) -> Vector2:

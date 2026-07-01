@@ -39,6 +39,9 @@ func setup(pos: Vector2, val: float, k: int, col: Color, wtype := Weapon.Type.ST
 	weapon_type = wtype
 	if _circle:
 		_circle.radius = 16.0 if kind == Kind.WEAPON else 9.0
+	# Gems are STATIC (drawn once; the node transform moves the sprite for free) so we don't
+	# redraw ~100 of them every frame. Only the few weapon crates animate their pulse.
+	set_process(kind == Kind.WEAPON)
 	queue_redraw()
 
 func fling(impulse: Vector2) -> void:
