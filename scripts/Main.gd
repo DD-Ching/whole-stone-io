@@ -25,6 +25,7 @@ var _awaiting_respawn := false
 func _ready() -> void:
 	Game.reset_run()
 	_build_walls()
+	add_child(Terrain.new())          # contour heightfield + gravity gradient (draws under everything)
 	_seed_gems(Game.AMBIENT_GEMS)
 
 	player = Player.new()
@@ -34,6 +35,8 @@ func _ready() -> void:
 
 	for i in range(Game.BOT_TARGET):
 		_spawn_bot()
+
+	_spawn_fields()
 
 	# HUD in its own CanvasLayer so it's screen-space, independent of the camera zoom.
 	var layer := CanvasLayer.new()
@@ -127,6 +130,26 @@ func _topup_gems() -> void:
 		var g := Pickup.new()
 		add_child(g)
 		g.setup(_rand_pos(), Game.GEM_MASS, Pickup.Kind.GEM, Game.random_color())
+
+func _spawn_fields() -> void:
+	var kinds := [
+		ForceField.Kind.GRAVITY, ForceField.Kind.MAGNET, ForceField.Kind.REPULSOR,
+		ForceField.Kind.CUSHION, ForceField.Kind.CURRENT, ForceField.Kind.REVERSAL,
+	]
+	for k in kinds:            # one of every kind…
+		_add_field(k)
+	for i in range(3):         # …plus a few extra at random
+		_add_field(kinds[Game.rng().randi() % kinds.size()])
+
+func _add_field(kind: int) -> void:
+	var pos := _rand_pos()
+	var tries := 0
+	while pos.length() < 380.0 and tries < 8:   # keep clear of the centre player spawn
+		pos = _rand_pos()
+		tries += 1
+	var f := ForceField.new()
+	add_child(f)
+	f.setup(kind, pos, Game.rng().randf_range(190.0, 300.0), Vector2.RIGHT.rotated(Game.rng().randf() * TAU))
 
 func _rand_weapon_type() -> int:
 	var pool := [Weapon.Type.STONE, Weapon.Type.HAMMER, Weapon.Type.SICKLE]

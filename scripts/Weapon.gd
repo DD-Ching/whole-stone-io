@@ -42,6 +42,7 @@ const SPIN_MIN_STAMINA := 30.0
 const SPIN_HIT_INTERVAL := 0.45
 const SPIN_SPEED_REF := 560.0  ## the whirl reads as this head speed for damage
 const PICKUP_FLING := 2.4      ## impulse multiplier when the head bats a loose gem
+const CLASH_SPEED := 620.0     ## combined head speed above which two swung stones CLASH and bounce apart
 
 var type: int = Type.STONE
 var state: int = State.IDLE
@@ -63,6 +64,7 @@ var _prev_owner_vel := Vector2.ZERO
 var _hit_ids := {}
 var _hit_clear := 0.0
 var _spin_clear := 0.0
+var _clash_cd := 0.0
 var _trail: Array = []
 
 # Cached derived (recomputed on mass change).
@@ -81,10 +83,12 @@ var _circle: CircleShape2D
 func _ready() -> void:
 	_owner = get_parent() as Fighter
 	_hitbox = Area2D.new()
-	_hitbox.collision_layer = 0
-	_hitbox.collision_mask = Game.L_FIGHTER | Game.L_PICKUP
+	# The head lives on its OWN collision layer and is monitorable, so other weapons'
+	# hitboxes can detect it — that's what makes two swung stones physically CLASH.
+	_hitbox.collision_layer = Game.L_WEAPON
+	_hitbox.collision_mask = Game.L_FIGHTER | Game.L_PICKUP | Game.L_WEAPON
 	_hitbox.monitoring = true
-	_hitbox.monitorable = false
+	_hitbox.monitorable = true
 	_circle = CircleShape2D.new()
 	_circle.radius = _head_radius
 	_hitshape = CollisionShape2D.new()
@@ -209,7 +213,33 @@ func _physics_process(delta: float) -> void:
 	if _hitbox:
 		_hitbox.position = Vector2(_head_dist, 0.0)
 	_update_trail(delta)
+	_check_clash(delta)
 	queue_redraw()
+
+## Two swung stones colliding: if their combined head speed is high enough, both bounce
+## off each other (reverse spin), the wielders are shoved apart, and a spark pops. Uses the
+## weapon's own L_WEAPON collision layer via get_overlapping_areas().
+func _check_clash(delta: float) -> void:
+	_clash_cd -= delta
+	if _clash_cd > 0.0:
+		return
+	for area in _hitbox.get_overlapping_areas():
+		var ow := area.get_parent() as Weapon
+		if ow == null or ow == self:
+			continue
+		if _head_speed + ow._head_speed < CLASH_SPEED:
+			continue
+		_avel = -_avel * 0.6
+		_clash_cd = 0.28
+		if _owner and ow._owner:
+			var push := (_owner.global_position - ow._owner.global_position).normalized() * 170.0
+			_owner.lunge(push)
+			_owner.on_hit_feedback(14.0, push, false)
+			# Both weapons run this each frame — emit the shared popup from just one side.
+			if _owner.get_instance_id() < ow._owner.get_instance_id():
+				var mid := (_head_at() + ow._head_at()) * 0.5
+				Game.popup("CLASH!", mid + Vector2(0, -18), Color(1.0, 0.95, 0.7), 1.15)
+		break
 
 func _update_pendulum(delta: float, accel: Vector2) -> void:
 	var diff := wrapf(_target_aim - _angle, -PI, PI)

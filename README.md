@@ -40,6 +40,26 @@ Grab a floating crate to swap your head:
 | **Hammer (錘)** | Huge damage + knockback, but heavy and laggy to swing. |
 | **Sickle (鐮)** | Fast, long reach, low knockback — wins on sustained speed. |
 
+## Battlefield physics
+
+The arena isn't flat. A procedural **contour map** (Gaussian-mutated noise, drawn as
+topographic iso-lines) is really a **gravity gradient** — you slide *downhill*, so valleys
+gather the crowd and loot while ridges shed you. Scattered across it are **force fields**
+(each an Area2D on its own collision layer):
+
+| Field | Effect |
+| --- | --- |
+| **Gravity well** | pulls everything inward, stronger toward the centre (梯度) |
+| **Mana / magnet** | vacuums loose gems into a vortex (魔力/磁力場) |
+| **Repulsor** | shoves everything outward (力場彈開) |
+| **Current** | a conveyor that *adds* velocity; a cushion *subtracts* it (加減法) |
+| **Air cushion** | soft armor: slow bodies settle, moderate bounce elastically, but a **hard/fast** hit **pierces** it and pops it (刺破 / 來不及緩衝) |
+| **Reversal** | counter terrain — reflects your momentum back on entry (關鍵逆轉/相剋) |
+
+Weapons have their **own collision layer**, so two fast-swung stones **clash** and bounce
+apart. Fast movers leave a speed **afterimage** (影像速度). Loose gems are real RigidBody2Ds,
+so every field, slam and clash flings them around.
+
 ## Controls
 
 | Input | Action |

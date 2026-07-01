@@ -19,6 +19,8 @@ signal player_spawned()
 const L_FIGHTER := 1   ## bodies that can be hit / detected by weapons
 const L_PICKUP := 2    ## loose gems + weapon crates
 const L_WALL := 4      ## arena bounds
+const L_FIELD := 8     ## force-field areas (gravity/magnet/repulsor/cushion/current/reversal)
+const L_WEAPON := 16   ## the swung stone head — its own layer so weapons can CLASH with each other
 
 # --- arena -----------------------------------------------------------------------
 const ARENA_SIZE := Vector2(3400.0, 2400.0)

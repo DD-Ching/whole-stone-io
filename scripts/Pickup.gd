@@ -44,6 +44,14 @@ func setup(pos: Vector2, val: float, k: int, col: Color, wtype := Weapon.Type.ST
 func fling(impulse: Vector2) -> void:
 	apply_central_impulse(impulse)
 
+## Force fields + terrain push gems around too (magnet vortex, currents, downhill drift).
+func apply_env_force(accel: Vector2, _delta: float) -> void:
+	apply_central_force(accel)
+
+## A reversal/cushion zone bounces a gem's momentum back (clamped so it can't ratchet up).
+func env_reflect(factor: float, outward: Vector2) -> void:
+	linear_velocity = (-linear_velocity * factor + outward).limit_length(1400.0)
+
 func consume() -> void:
 	if consumed:
 		return

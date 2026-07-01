@@ -11,6 +11,12 @@ extends CharacterBody2D
 
 signal died(who: Fighter)
 
+const ENV_DRAG := 3.6             ## proportional drag on environmental (field/terrain) velocity
+const GHOST_SPEED := 235.0        ## speed above which a motion afterimage is shed (影像速度)
+const GHOST_LIFE := 0.26
+const PIERCE_KNOCK := 850.0       ## a hit harder than this PIERCES a cushion's protection (刺破/來不及緩衝)
+const CUSHION_KNOCK_MULT := 0.3   ## fraction of knockback kept while buffered by an air cushion
+
 var mass := Game.START_MASS
 var health := 60.0
 var max_health := 60.0
@@ -25,11 +31,14 @@ var move_dir := Vector2.ZERO      ## set by the subclass each frame
 
 var _steer := Vector2.ZERO        ## momentum-carrying input velocity
 var _impulse := Vector2.ZERO      ## knockback + swing-lunge burst, decays on its own
+var _env := Vector2.ZERO          ## velocity from force fields + terrain gradient (drag-damped)
 var _invuln := 0.0
 var _hurt := 0.0
+var _cushion := 0.0               ## >0 while sheltered in an air cushion (soft armor)
 var _stamina_delay := 0.0
 var _dead := false
 var _last_aim := 0.0
+var _ghosts: Array = []           ## recent positions for the speed afterimage
 
 var weapon: Weapon
 var _shape: CollisionShape2D
@@ -73,7 +82,8 @@ func _physics_process(delta: float) -> void:
 	_control(delta)
 	_integrate(delta)
 	_tick(delta)
-	if _hurt > 0.0 or _invuln > 0.0 or absf(weapon.aim_angle - _last_aim) > 0.01:
+	_update_ghosts(delta)
+	if _hurt > 0.0 or _invuln > 0.0 or _ghosts.size() > 0 or absf(weapon.aim_angle - _last_aim) > 0.01:
 		_last_aim = weapon.aim_angle
 		queue_redraw()
 
@@ -88,8 +98,34 @@ func _integrate(delta: float) -> void:
 	else:
 		_steer = _steer.move_toward(Vector2.ZERO, Game.FRICTION * delta)
 	_impulse = _impulse.move_toward(Vector2.ZERO, Game.KNOCK_FRICTION * delta)
-	velocity = _steer + _impulse
+	# Environmental velocity (fields + terrain) bleeds off with proportional drag, so a
+	# steady force settles at a sane terminal speed instead of running away.
+	_env *= maxf(0.0, 1.0 - ENV_DRAG * delta)
+	velocity = _steer + _impulse + _env
 	move_and_slide()
+
+## Accumulate an environmental acceleration this frame (force fields, terrain gradient).
+func apply_env_force(accel: Vector2, delta: float) -> void:
+	_env += accel * delta
+
+## A counter/cushion zone flings this body's momentum back (reflect), plus a shove out.
+func env_reflect(factor: float, outward: Vector2) -> void:
+	var v := velocity
+	_steer *= -0.3
+	_env = Vector2.ZERO
+	_impulse = (-v * factor + outward).limit_length(2000.0)
+
+## An air cushion is currently sheltering us — soft armor for a short window.
+func mark_cushioned() -> void:
+	_cushion = 0.15
+
+func _update_ghosts(delta: float) -> void:
+	if velocity.length() > GHOST_SPEED:
+		_ghosts.push_back({"pos": global_position, "age": 0.0})
+	for g in _ghosts:
+		g.age += delta
+	while _ghosts.size() > 0 and _ghosts[0].age > GHOST_LIFE:
+		_ghosts.pop_front()
 
 ## While the weapon is committed you are far less mobile — the cost of power.
 func _weapon_speed_mult() -> float:
@@ -106,6 +142,8 @@ func _tick(delta: float) -> void:
 		_invuln = maxf(0.0, _invuln - delta)
 	if _hurt > 0.0:
 		_hurt = maxf(0.0, _hurt - delta)
+	if _cushion > 0.0:
+		_cushion = maxf(0.0, _cushion - delta)
 	if health < max_health:
 		health = minf(max_health, health + Game.HEALTH_REGEN * delta)
 	if _stamina_delay > 0.0:
@@ -119,6 +157,11 @@ func _tick(delta: float) -> void:
 func take_damage(amount: float, dir: Vector2, knockback: float) -> bool:
 	if _dead or _invuln > 0.0:
 		return false
+	# Soft armor: an air cushion buffers the blow — UNLESS it's hard enough to pierce
+	# (刺破 / 來不及緩衝), in which case the full impact lands.
+	if _cushion > 0.0 and knockback < PIERCE_KNOCK:
+		knockback *= CUSHION_KNOCK_MULT
+		amount *= 0.65
 	health -= amount
 	_invuln = Game.INVULN
 	_hurt = 0.32
@@ -196,8 +239,11 @@ func spawn_setup(pos: Vector2, m: float, nm: String, col: Color) -> void:
 	_dead = false
 	_steer = Vector2.ZERO
 	_impulse = Vector2.ZERO
+	_env = Vector2.ZERO
 	_invuln = 0.0
 	_hurt = 0.0
+	_cushion = 0.0
+	_ghosts.clear()
 	_apply_mass()
 	health = max_health
 	stamina = Game.STAMINA_MAX
@@ -248,6 +294,10 @@ func _draw() -> void:
 		col = col.lerp(Color(1, 0.3, 0.3), clampf(_hurt / 0.32, 0.0, 1.0))
 	if _invuln > 0.0 and int(_invuln * 30.0) % 2 == 0:
 		col = col.darkened(0.25)
+	# Speed afterimage (影像速度) — fading ghosts trailing a fast mover.
+	for g in _ghosts:
+		var ga: float = (1.0 - float(g.age) / GHOST_LIFE) * 0.32
+		draw_circle(to_local(g.pos), body_radius * 0.92, Color(color.r, color.g, color.b, ga))
 	draw_circle(Vector2.ZERO, body_radius, col)
 	draw_arc(Vector2.ZERO, body_radius, 0.0, TAU, 26, col.darkened(0.4), 3.0)
 	# Facing dot toward the aim.
