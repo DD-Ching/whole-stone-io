@@ -46,8 +46,11 @@ func _process(delta: float) -> void:
 		# further out as they grow so the ever-bigger stone still fits.
 		var z := clampf(pow(f.mass, -0.12) * 0.82, 0.2, 0.86)   # low floor so a limitless giant still fits on screen
 		zoom = zoom.lerp(Vector2(z, z), clampf(3.0 * delta, 0.0, 1.0))
-	_shake = maxf(0.0, _shake - 70.0 * delta)
-	_kick = _kick.move_toward(Vector2.ZERO, 420.0 * delta)
+	# Decay in REAL time: during a hitstop the scaled delta shrinks ~20x, and combat
+	# keeps feeding shake in — scaled-delta decay let the shake pile up and linger.
+	var real_delta := delta / maxf(Engine.time_scale, 0.05)
+	_shake = maxf(0.0, _shake - 70.0 * real_delta)
+	_kick = _kick.move_toward(Vector2.ZERO, 420.0 * real_delta)
 	var off := _kick
 	if _shake > 0.5:
 		off += Vector2(_rng.randf_range(-1.0, 1.0), _rng.randf_range(-1.0, 1.0)) * _shake

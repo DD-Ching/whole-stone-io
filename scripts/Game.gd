@@ -135,9 +135,11 @@ static func agility_for_mass(mass: float) -> float:
 	return pow(mass, -0.22)
 
 # --- hit-stop ---------------------------------------------------------------------
-# One shared real-time deadline: overlapping stops EXTEND the freeze, the restore
-# timer ignores time_scale (or a KO during a stop would never unfreeze), and scale
-# never goes below 0.05 (delta-division code NaNs at 0).
+# One shared real-time deadline: overlapping stops EXTEND the freeze, and scale
+# never goes below 0.05 (delta-division code NaNs at 0). The restore is POLLED in
+# _process against the wall clock — a one-shot timer callback can wake a few ms
+# early (frame-delta drift), skip its restore, and leave the game in slow motion
+# forever; a per-frame check self-heals on the next frame no matter what.
 var _hitstop_deadline := 0.0
 
 ## Freeze the game briefly — ONLY for player-involved moments (a global time_scale
@@ -146,10 +148,9 @@ func hitstop(scale: float, duration: float) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 	_hitstop_deadline = maxf(_hitstop_deadline, now + duration)
 	Engine.time_scale = clampf(minf(Engine.time_scale, scale), 0.05, 1.0)
-	get_tree().create_timer(duration, true, false, true).timeout.connect(_hitstop_restore)
 
-func _hitstop_restore() -> void:
-	if Time.get_ticks_msec() / 1000.0 >= _hitstop_deadline - 0.005:
+func _process(_delta: float) -> void:
+	if Engine.time_scale < 1.0 and Time.get_ticks_msec() / 1000.0 >= _hitstop_deadline:
 		Engine.time_scale = 1.0
 
 ## Spawn a short floating label at a world position in the current scene.
