@@ -74,6 +74,11 @@ var _hit_clear := 0.0
 var _spin_clear := 0.0
 var _clash_cd := 0.0
 var _trail: Array = []
+var _overlap_weapons: Array = []   ## other weapons' hitboxes touching ours (event-driven, usually empty)
+var _tracking_pickups := true
+var _draw_key := -999              ## quantized visual state — redraw only when it changes
+var _slam_flash := 0.0
+var _slam_point := Vector2.ZERO
 
 # Cached derived (recomputed on mass change).
 var _head_radius := HEAD_RADIUS_BASE
@@ -106,6 +111,11 @@ func _ready() -> void:
 	_hitshape.shape = _circle
 	_hitbox.add_child(_hitshape)
 	add_child(_hitbox)
+	# Weapon-vs-weapon contact is EVENT-driven: the physics server tells us when another
+	# head starts/stops touching ours, so the per-frame clash check is a no-op unless a
+	# clash is actually possible (polling get_overlapping_areas() allocated every frame).
+	_hitbox.area_entered.connect(_on_weapon_area_entered)
+	_hitbox.area_exited.connect(_on_weapon_area_exited)
 	# The SOLID head: a kinematic body driven to the head position each frame. It physically
 	# pushes any OTHER fighter (and is pushed against by them) so nothing overlaps — but a
 	# collision exception with our own wielder means our own weapon never blocks us.
@@ -208,6 +218,7 @@ func reset() -> void:
 	_head_dist = _arm_length
 	_hit_ids.clear()
 	_trail.clear()
+	_overlap_weapons.clear()   # a respawn teleport invalidates every tracked overlap
 	_swinging = false
 	_head_speed = 0.0
 	_head_world = _head_at()
@@ -240,6 +251,9 @@ func _physics_process(delta: float) -> void:
 			var fast := _head_speed > Game.HIT_SPEED_MIN
 			if fast and state == State.IDLE:
 				_change_state(State.SWING)
+				# The whip-up whoosh doubles as a positional danger telegraph — you HEAR
+				# a head come up to speed behind you before you see it.
+				Sfx.play(&"whoosh", _head_world, -6.0, Game.rng().randf_range(0.88, 1.15))
 			elif not fast and state == State.SWING:
 				_change_state(State.IDLE)
 		State.SLAM:
@@ -254,16 +268,40 @@ func _physics_process(delta: float) -> void:
 		_solid.global_position = _head_at()   # drive the physical head (top_level) to the head world pos
 	_update_trail(delta)
 	_check_clash(delta)
-	queue_redraw()
+	if _slam_flash > 0.0:
+		_slam_flash = maxf(0.0, _slam_flash - delta)
+
+	# Idle heads stop pair-tracking gems (the physics server otherwise maintains overlap
+	# pairs for every gem each of 14 sweeping heads drifts past) — a slow head never
+	# hits or flings anything anyway, so nothing observable changes.
+	var want_pickups := state != State.IDLE or _head_speed >= Game.HIT_SPEED_MIN * 0.7
+	if want_pickups != _tracking_pickups:
+		_tracking_pickups = want_pickups
+		_hitbox.set_deferred("collision_mask",
+			Game.L_FIGHTER | Game.L_WEAPON | (Game.L_PICKUP if want_pickups else 0))
+
+	# Redraw only when the QUANTIZED visual state changes — rotation is a transform, not
+	# a redraw, so a resting or steadily-carried head costs zero canvas re-recording.
+	var key := state
+	key = key * 16 + int(clampf(_head_speed / 1400.0, 0.0, 1.0) * 12.0)
+	key = key * 32 + int(_lift * 24.0)
+	key = key * 4096 + int(_head_dist * 0.25)
+	if key != _draw_key or _trail.size() > 0 or _slam_flash > 0.0 or state == State.SLAM:
+		_draw_key = key
+		queue_redraw()
 
 ## Two swung stones colliding: if their combined head speed is high enough, both bounce
 ## off each other (reverse spin), the wielders are shoved apart, and a spark pops. Uses the
 ## weapon's own L_WEAPON collision layer via get_overlapping_areas().
 func _check_clash(delta: float) -> void:
 	_clash_cd -= delta
-	if _clash_cd > 0.0:
+	if _overlap_weapons.is_empty() or _clash_cd > 0.0:
 		return
-	for area in _hitbox.get_overlapping_areas():
+	for i in range(_overlap_weapons.size() - 1, -1, -1):
+		var area: Area2D = _overlap_weapons[i]
+		if not is_instance_valid(area):
+			_overlap_weapons.remove_at(i)   # its wielder died and was freed mid-overlap
+			continue
 		var ow := area.get_parent() as Weapon
 		if ow == null or ow == self:
 			continue
@@ -282,11 +320,23 @@ func _check_clash(delta: float) -> void:
 			var shove := clampf(ow_m * (ow._head_speed + 200.0) / maxf(my_m, 0.05) * 0.02, 40.0, 320.0)
 			_owner.lunge(dir * shove)
 			_owner.on_hit_feedback(clampf(shove * 0.08, 8.0, 22.0), dir, false)
-			# Both weapons run this each frame — emit one shared popup, only if the player is involved.
-			if (_owner.is_player or ow._owner.is_player) and _owner.get_instance_id() < ow._owner.get_instance_id():
+			# Both weapons run this — the lower instance id emits the one shared spark/sound/popup.
+			if _owner.get_instance_id() < ow._owner.get_instance_id():
 				var mid := (_head_at() + ow._head_at()) * 0.5
-				Game.popup("CLASH!", mid + Vector2(0, -18), Color(1.0, 0.95, 0.7), 1.15)
+				Sfx.play(&"clash", mid, -2.0, Game.rng().randf_range(0.9, 1.12))
+				if Game.fx:
+					Game.fx.burst(mid, Color(1.0, 0.95, 0.8), 10, 420.0, 2.5)
+				if _owner.is_player or ow._owner.is_player:
+					Game.popup("CLASH!", mid + Vector2(0, -18), Color(1.0, 0.95, 0.7), 1.15)
 		break
+
+func _on_weapon_area_entered(a: Area2D) -> void:
+	var w := a.get_parent() as Weapon
+	if w != null and w != self:
+		_overlap_weapons.append(a)
+
+func _on_weapon_area_exited(a: Area2D) -> void:
+	_overlap_weapons.erase(a)
 
 ## The head's effective mass = weapon type weight × wielder size (bigger fighter = heavier head).
 func _effective_mass() -> float:
@@ -349,7 +399,12 @@ func _do_slam_impact() -> void:
 	var radius := _arm_length * 1.5 + _head_radius
 	var mass_factor := sqrt(maxf(_owner.mass, 0.001))
 	var dmg := Game.BASE_DMG * float(t["dmg"]) * mass_factor * 1.7
+	# The detonation is carried by the head's WEIGHT — a feather staff can't slam like a
+	# hammer, whatever its tip damage says (otherwise staff slams are degenerate: cheapest
+	# stamina AND the highest dmg multiplier).
+	dmg *= 0.55 + 0.45 * float(t["mass"])
 	var knock := Game.BASE_KNOCK * float(t["knock"]) * 1.8
+	var hit_any := false
 	# Radial burst — everything in range is damaged + launched outward from the point.
 	for f in get_tree().get_nodes_in_group("fighter"):
 		if f == _owner or not is_instance_valid(f):
@@ -361,6 +416,7 @@ func _do_slam_impact() -> void:
 		if dir == Vector2.ZERO:
 			dir = Vector2.RIGHT.rotated(_target_aim)
 		var falloff := 1.0 - clampf(d / maxf(radius, 1.0), 0.0, 1.0) * 0.5
+		hit_any = true
 		if f.take_damage(dmg * falloff, dir, knock * falloff):
 			_owner.on_scored_kill(f)
 	for p in get_tree().get_nodes_in_group("pickup"):
@@ -370,7 +426,14 @@ func _do_slam_impact() -> void:
 		if pd <= radius * 1.4 and p.has_method("fling"):
 			var pdir: Vector2 = (p.global_position - point).normalized()
 			p.fling(pdir * (radius - pd) * 3.0)
+	_slam_point = point
+	_slam_flash = 0.1
+	Sfx.play(&"boom", point, 0.0, Game.rng().randf_range(0.92, 1.1))
+	if Game.fx:
+		Game.fx.burst(point, Color(1.0, 0.6, 0.25), 18, 520.0, 3.5)
 	if _owner.is_player:
+		if hit_any:
+			Game.hitstop(0.15, 0.05)   # a connecting slam bites for a beat
 		Game.popup("SMASH!", point + Vector2(0, -30), Color(1.0, 0.82, 0.4), 1.3)
 	_owner.on_hit_feedback(26.0, Vector2.RIGHT.rotated(_target_aim), true)
 
@@ -446,6 +509,11 @@ func _score_hit(victim: Fighter, speed: float, is_spin: bool) -> void:
 		if show_pop:
 			Game.popup("PINNED!", victim.global_position + Vector2(0, -victim.body_radius - 16.0), Color(1.0, 0.55, 0.3), 1.1)
 	var died := victim.take_damage(dmg, dir, knock)
+	# Impact feedback scales with how hard the hit landed: a graze taps, a full whip cracks.
+	var speed_n := clampf((speed_factor - 0.35) / 2.05, 0.0, 1.0)
+	Sfx.play(&"thud", victim.global_position, lerpf(-9.0, 0.0, speed_n), lerpf(0.75, 1.25, speed_n))
+	if Game.fx:
+		Game.fx.burst(victim.global_position, Color(1.0, 0.85, 0.5), 4 + int(speed_factor * 4.0), 260.0 * speed_factor)
 	var shake := clampf(speed_factor * (18.0 if is_spin else 26.0), 6.0, 44.0)
 	_owner.on_hit_feedback(shake * (0.5 if is_spin else 1.0), dir, false)
 	# A scored hit commits the wielder's mass — a capped forward lunge along the blow.
@@ -481,6 +549,17 @@ func _ease_out(t: float) -> float:
 # --- drawing (all placeholder art, in code) ---------------------------------------
 
 func _draw() -> void:
+	# SLAM telegraph — the impact ring is drawn on the ground during the windup, so a
+	# slam (yours or a bot's) is always a READABLE dodge test: counterable-defenses
+	# pillar. It fills as the windup commits, then flashes white at detonation.
+	if state == State.SLAM and not _slam_struck:
+		var wt := clampf(_state_time / SLAM_WINDUP, 0.0, 1.0)
+		var ip := to_local(_owner.global_position + Vector2(_arm_length * 1.35, 0.0).rotated(_target_aim))
+		var rad := _arm_length * 1.5 + _head_radius
+		draw_arc(ip, rad, 0.0, TAU, 40, Color(1.0, 0.35, 0.15, 0.15 + 0.35 * wt), 3.0 + 3.0 * wt)
+		draw_circle(ip, rad * wt, Color(1.0, 0.4, 0.15, 0.10))
+	if _slam_flash > 0.0:
+		draw_circle(to_local(_slam_point), (_arm_length * 1.5 + _head_radius) * 1.05, Color(1, 1, 1, _slam_flash * 3.5))
 	_draw_trail()
 	var head := Vector2(_head_dist, 0.0)
 	var r := _head_radius * (1.0 + 0.4 * _lift)

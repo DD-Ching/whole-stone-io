@@ -38,7 +38,10 @@ func setup(pos: Vector2, val: float, k: int, col: Color, wtype := Weapon.Type.ST
 	tint = col
 	weapon_type = wtype
 	if _circle:
-		_circle.radius = 16.0 if kind == Kind.WEAPON else 9.0
+		# A gem's size tells you its worth — death-spill gems are ~2x baseline and read
+		# as the richer loot they are.
+		_circle.radius = 16.0 if kind == Kind.WEAPON \
+			else 9.0 * clampf(sqrt(val / Game.GEM_MASS), 0.8, 2.2)
 	# Gems are STATIC (drawn once; the node transform moves the sprite for free) so we don't
 	# redraw ~100 of them every frame. Only the few weapon crates animate their pulse.
 	set_process(kind == Kind.WEAPON)
@@ -62,6 +65,7 @@ func consume() -> void:
 	queue_free()
 
 func _process(delta: float) -> void:
+	# Crates only (gems never process): at most CRATE_CAP of these redraw their pulse.
 	_t += delta
 	queue_redraw()
 
@@ -69,15 +73,13 @@ func _draw() -> void:
 	if kind == Kind.WEAPON:
 		_draw_crate()
 		return
-	var pulse := 1.0 + 0.12 * sin(_t * 5.0)
-	var r := _circle.radius * pulse
+	var r := _circle.radius
 	draw_circle(Vector2.ZERO, r, tint)
 	draw_circle(Vector2(-r * 0.3, -r * 0.3), r * 0.4, tint.lightened(0.4))
 	draw_arc(Vector2.ZERO, r, 0.0, TAU, 14, tint.darkened(0.35), 1.5)
 
 func _draw_crate() -> void:
-	var pulse := 1.0 + 0.08 * sin(_t * 4.0)
-	var s := 16.0 * pulse
+	var s := 16.0 * (1.0 + 0.08 * sin(_t * 4.0))
 	var box := Rect2(Vector2(-s, -s), Vector2(s * 2.0, s * 2.0))
 	var col := _crate_color()
 	draw_rect(box, col.darkened(0.1))

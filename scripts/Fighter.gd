@@ -25,7 +25,10 @@ var color := Color("d9c24a")
 var display_name := "Knight"
 var is_player := false
 var uses_stamina := true
+var stamina_regen_mult := 1.0     ## bots run a mild 1.25 — they manage a real bar, just clumsily
 var body_radius := Game.BASE_BODY_RADIUS
+var is_king := false              ## wearing the crown (set by Main's leaderboard pass)
+var wet := 1.0                    ## steering-speed multiplier from terrain water (1 = dry land)
 
 var move_dir := Vector2.ZERO      ## set by the subclass each frame
 
@@ -39,6 +42,13 @@ var _stamina_delay := 0.0
 var _dead := false
 var _last_aim := 0.0
 var _ghosts: Array = []           ## recent positions for the speed afterimage
+var _wet_drawn := 1.0             ## wetness at last redraw (ripple appears/vanishes)
+var _last_health_i := -1          ## quantized health at last redraw (drives the bar)
+var _milestone := 0               ## last size-doubling celebrated (player fanfare)
+var _name_line: TextLine          ## cached shaped nameplate — re-shaped only when the text changes
+var _label_val := -1
+var _chime_step := 0              ## the gem-vacuum pitch ladder
+var _chime_time := 0.0
 
 var weapon: Weapon
 var _shape: CollisionShape2D
@@ -85,8 +95,15 @@ func _physics_process(delta: float) -> void:
 	_integrate(delta)
 	_tick(delta)
 	_update_ghosts(delta)
-	if _hurt > 0.0 or _invuln > 0.0 or _ghosts.size() > 0 or absf(weapon.aim_angle - _last_aim) > 0.01:
+	# Redraw only when something VISIBLE changed. The aim epsilon is coarse on purpose
+	# (0.045 rad ≈ the facing dot moving ~1px) — a whirling bot at 7.5 rad/s still
+	# redraws, but a mouse micro-jitter doesn't; health is quantized to whole points.
+	var health_i := int(health)
+	if _hurt > 0.0 or _invuln > 0.0 or _ghosts.size() > 0 \
+			or absf(weapon.aim_angle - _last_aim) > 0.045 \
+			or health_i != _last_health_i or wet != _wet_drawn:
 		_last_aim = weapon.aim_angle
+		_last_health_i = health_i
 		queue_redraw()
 
 ## Subclass hook: set `move_dir` (unit-ish) and drive `weapon`.
@@ -94,7 +111,9 @@ func _control(_delta: float) -> void:
 	pass
 
 func _integrate(delta: float) -> void:
-	var spd := Game.speed_for_mass(mass) * _weapon_speed_mult()
+	# Water drags at your LEGS only (steering) — knockback and terrain shove still carry
+	# in full, so smashing a rival into a lake remains a legitimate setup.
+	var spd := Game.speed_for_mass(mass) * _weapon_speed_mult() * wet
 	if move_dir != Vector2.ZERO:
 		_steer = _steer.move_toward(move_dir.limit_length(1.0) * spd, Game.ACCEL * delta)
 	else:
@@ -124,8 +143,16 @@ func env_reflect(factor: float, outward: Vector2) -> void:
 func mark_cushioned() -> void:
 	_cushion = 0.15
 
+## Terrain tells us how wet we are each physics frame. Entering water splashes.
+func set_wetness(w: float) -> void:
+	if w < 0.99 and wet >= 0.99 and not _dead:
+		Sfx.play(&"splash", global_position, -6.0, Game.rng().randf_range(0.9, 1.1))
+	wet = w
+
 func _update_ghosts(delta: float) -> void:
-	if velocity.length() > GHOST_SPEED:
+	# Only a BOOSTED body sheds afterimages (knockback, lunge, downhill run) — plain
+	# walking is below the bar, so a cruising fighter doesn't force redraws every frame.
+	if velocity.length() > maxf(GHOST_SPEED, Game.speed_for_mass(mass) * 1.15):
 		_ghosts.push_back({"pos": global_position, "age": 0.0})
 	for g in _ghosts:
 		g.age += delta
@@ -154,7 +181,11 @@ func _tick(delta: float) -> void:
 	if _stamina_delay > 0.0:
 		_stamina_delay = maxf(0.0, _stamina_delay - delta)
 	elif stamina < Game.STAMINA_MAX:
-		stamina = minf(Game.STAMINA_MAX, stamina + Game.STAMINA_REGEN * delta)
+		stamina = minf(Game.STAMINA_MAX, stamina + Game.STAMINA_REGEN * stamina_regen_mult * delta)
+	if _chime_time > 0.0:
+		_chime_time = maxf(0.0, _chime_time - delta)
+		if _chime_time == 0.0:
+			_chime_step = 0   # the gem-vacuum combo ladder resets when you stop eating
 
 # --- combat ------------------------------------------------------------------------
 
@@ -218,8 +249,15 @@ func _on_pickup_touched(body: Node) -> void:
 		return
 	if p.kind == Pickup.Kind.GEM:
 		grow(p.value)
+		if is_player:
+			# The vacuum combo: each gem within 0.8s rings one semitone higher.
+			var pitch := pow(2.0, float(mini(_chime_step, 14)) / 12.0)
+			_chime_step += 1
+			_chime_time = 0.8
+			Sfx.play(&"chime", global_position, -8.0, pitch)
 	else:
 		weapon.set_type(p.weapon_type)
+		Sfx.play(&"chime", global_position, -4.0, 0.65)
 		Game.popup(weapon.type_name() + "!", global_position + Vector2(0, -body_radius - 22.0), Color(1, 0.9, 0.5), 1.2)
 	p.consume()
 
@@ -227,9 +265,15 @@ func on_hit_feedback(_shake: float, _dir: Vector2, _big: bool) -> void:
 	pass   # player overrides to shake the camera
 
 ## The wielder just felled `victim` — claim a chunk of its mass outright.
+## Felling the CROWN holder pays a bounty (0.5 of their mass instead of 0.4) — a soft
+## comeback valve that keeps "kill the king" worth the risk.
 func on_scored_kill(victim: Fighter) -> void:
-	grow(victim.mass * Game.KILL_ABSORB)
+	grow(victim.mass * (0.5 if victim.is_king else Game.KILL_ABSORB))
+	Game.feed_event.emit("%s  >  %s" % [display_name, victim.display_name], is_player or victim.is_player)
+	if is_player or victim.is_player:
+		Sfx.play(&"gong", victim.global_position, 0.0, clampf(1.2 / sqrt(maxf(victim.mass, 0.5)), 0.5, 1.2))
 	if is_player:
+		Game.hitstop(0.05, 0.08)   # the payoff moment gets a real beat
 		Game.popup("KO!", global_position + Vector2(0, -body_radius - 20.0), Color(1.0, 0.85, 0.3), 1.4)
 		Game.add_kill()
 
@@ -237,7 +281,17 @@ func grow(amount: float) -> void:
 	mass = clampf(mass + amount, Game.START_MASS, Game.MAX_MASS)
 	_apply_mass()
 	if is_player:
+		Game.player_mass = mass
 		Game.set_player_score(int(round(mass * 100.0)))
+		# Size-doubling fanfare: growth costs double each time, so celebrate each doubling —
+		# frequent hooks early, rare punctuation late, can never spam.
+		var lvl := int(floor(log(maxf(mass, 1.0)) / log(2.0)))
+		if lvl > _milestone:
+			_milestone = lvl
+			Game.popup("SIZE %d!" % int(round(mass * 100.0)), global_position + Vector2(0, -body_radius - 34.0), Color(1.0, 0.9, 0.4), 1.5)
+			Sfx.play(&"fanfare", global_position, -2.0)
+			if Game.fx:
+				Game.fx.ring(global_position, Color(1.0, 0.88, 0.45))
 
 ## Re-derive body size, reach, health cap and collector range from the current mass.
 func _apply_mass() -> void:
@@ -261,13 +315,23 @@ func spawn_setup(pos: Vector2, m: float, nm: String, col: Color) -> void:
 	_steer = Vector2.ZERO
 	_impulse = Vector2.ZERO
 	_env = Vector2.ZERO
-	_invuln = 0.0
+	# Spawn shield: a fresh life can't be smashed the instant it appears in a whirling
+	# pile. The player's shield cancels early on their first attack input (an
+	# invulnerable aggressor would be uncounterable).
+	_invuln = 1.5 if is_player else 1.0
 	_hurt = 0.0
 	_cushion = 0.0
+	wet = 1.0
+	is_king = false
 	_ghosts.clear()
+	_name_line = null
+	_label_val = -1
+	_milestone = int(floor(log(maxf(m, 1.0)) / log(2.0)))
 	_apply_mass()
 	health = max_health
 	stamina = Game.STAMINA_MAX
+	if is_player:
+		Game.player_mass = m
 	if weapon:
 		if is_player:
 			weapon.set_type(Weapon.Type.STONE)   # every life starts fresh with the boulder
@@ -283,6 +347,12 @@ func spawn_setup(pos: Vector2, m: float, nm: String, col: Color) -> void:
 func is_dead() -> bool:
 	return _dead
 
+## Main's leaderboard pass crowns / uncrowns the arena's #1.
+func set_king(k: bool) -> void:
+	if is_king != k:
+		is_king = k
+		queue_redraw()
+
 func _die() -> void:
 	if _dead:
 		return
@@ -291,6 +361,12 @@ func _die() -> void:
 		weapon.reset()                   # settle it out of SPIN/SWING so it can't hit while dead
 		weapon.set_solid_active(false)   # a corpse's stone shouldn't keep blocking the living
 		weapon.set_physics_process(false)
+	# The death reads as THIS fighter shattering — a burst in their own color.
+	if Game.fx:
+		Game.fx.burst(global_position, color, 26, 420.0, 4.0)
+	if is_player:
+		Sfx.play(&"gong", global_position, 0.0, 0.7)
+		Game.hitstop(0.05, 0.12)         # let the death land
 	_spill_loot()
 	died.emit(self)
 
@@ -299,24 +375,33 @@ func _spill_loot() -> void:
 	if scene == null:
 		return
 	var spill := mass * Game.SPILL_FRACTION
-	var count := clampi(int(spill / Game.GEM_MASS), 3, 40)
+	# Fewer, RICHER gems (each worth ~2 baseline) — and scattered on a ring around the
+	# corpse rather than stacked at one point, so the physics solver never sees the
+	# N²/2-pair contact island that a same-point pile of RigidBodies creates.
+	var count := clampi(int(spill / (Game.GEM_MASS * 2.0)), 3, 24)
 	var per := spill / float(count)
 	var r := Game.rng()
 	for i in range(count):
 		var g := Pickup.new()
 		scene.add_child(g)
-		g.setup(global_position, per, Pickup.Kind.GEM, color)
 		var a := r.randf() * TAU
+		var off := Vector2(cos(a), sin(a)) * (body_radius * 0.6 + r.randf_range(0.0, body_radius * 0.8))
+		g.setup(global_position + off, per, Pickup.Kind.GEM, color)
 		g.fling(Vector2(cos(a), sin(a)) * r.randf_range(120.0, 340.0))
 
 # --- drawing (placeholder art, in code) --------------------------------------------
 
 func _draw() -> void:
+	_wet_drawn = wet
 	var col := color
 	if _hurt > 0.0:
 		col = col.lerp(Color(1, 0.3, 0.3), clampf(_hurt / 0.32, 0.0, 1.0))
 	if _invuln > 0.0 and int(_invuln * 30.0) % 2 == 0:
 		col = col.darkened(0.25)
+	# Wading ripple — the visual half of the water slow (the feel half is the splash).
+	if wet < 0.99:
+		draw_arc(Vector2.ZERO, body_radius + 5.0, 0.0, TAU, 24, Color(0.7, 0.85, 1.0, 0.4), 2.0)
+		draw_arc(Vector2.ZERO, body_radius + 10.0, 0.0, TAU, 24, Color(0.7, 0.85, 1.0, 0.18), 2.0)
 	# Speed afterimage (影像速度) — fading ghosts trailing a fast mover.
 	for g in _ghosts:
 		var ga: float = (1.0 - float(g.age) / GHOST_LIFE) * 0.32
@@ -335,12 +420,34 @@ func _draw() -> void:
 		var frac := clampf(health / max_health, 0.0, 1.0)
 		draw_rect(Rect2(-w * 0.5, y, w * frac, 5.0), Color(0.4, 0.85, 0.4).lerp(Color(0.9, 0.4, 0.3), 1.0 - frac))
 
-	# Name + size, agar.io-style.
-	var font := ThemeDB.fallback_font
-	if font:
-		var label := "%s  %d" % [display_name, int(round(mass * 100.0))]
-		var fs := 15
-		var tw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		var pos := Vector2(-tw * 0.5, body_radius + 20.0)
-		draw_string(font, pos + Vector2(1, 1), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.6))
-		draw_string(font, pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.9))
+	# The crown — the arena's #1 wears it, everyone hunts it.
+	if is_king:
+		var cy := -body_radius - 26.0
+		var cw := 11.0
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(-cw, cy), Vector2(-cw, cy - 9.0), Vector2(-cw * 0.5, cy - 4.0),
+			Vector2(0, cy - 11.0), Vector2(cw * 0.5, cy - 4.0), Vector2(cw, cy - 9.0),
+			Vector2(cw, cy),
+		]), Color(1.0, 0.85, 0.25))
+
+	# Nameplate: shaped ONCE per label change (TextLine cache), tinted by the food chain —
+	# red will hunt you, green will flee you, white is an even fight. The tint uses the
+	# bots' own decision thresholds, so the color IS their intent.
+	var val := int(round(mass * 100.0))
+	if _name_line == null or val != _label_val:
+		_label_val = val
+		_name_line = TextLine.new()
+		_name_line.add_string("%s  %d" % [display_name, val], ThemeDB.fallback_font, 15)
+	var tint := Color(1, 1, 1, 0.9)
+	if is_player:
+		tint = Color(1, 0.92, 0.6, 0.95)
+	else:
+		var ratio := mass / maxf(Game.player_mass, 0.01)
+		if ratio > 1.18:
+			tint = Color(1.0, 0.55, 0.5, 0.95)
+		elif ratio < 0.92:
+			tint = Color(0.6, 0.95, 0.6, 0.9)
+	var ts := _name_line.get_size()
+	var tpos := Vector2(-ts.x * 0.5, body_radius + 8.0)
+	_name_line.draw(get_canvas_item(), tpos + Vector2(1.5, 1.5), Color(0, 0, 0, 0.6))
+	_name_line.draw(get_canvas_item(), tpos, tint)

@@ -32,6 +32,8 @@ var _slam_touch := -1
 var _whirl_touch := -1
 
 var _font: Font
+var _labels := {}        ## button label -> cached TextLine (shaped once, drawn forever)
+var _redraw_once := true ## one redraw queued by a press/release while both thumbs are idle
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -71,7 +73,11 @@ func _process(delta: float) -> void:
 	if _aim_move_cd > 0.0:
 		_aim_move_cd -= delta
 		aim_moving = _aim_move_cd > 0.0
-	queue_redraw()
+	# Redraw while a thumb is down (the sticks track it); when idle the buttons are a
+	# static image — one final redraw after the last release, then nothing.
+	if _move_touch != -1 or _aim_touch != -1 or _slam_touch != -1 or _whirl_touch != -1 or _redraw_once:
+		_redraw_once = false
+		queue_redraw()
 
 func _btn_slam(vp: Vector2) -> Vector2:
 	return Vector2(vp.x - 90.0, vp.y - 90.0)
@@ -84,6 +90,7 @@ func _input(event: InputEvent) -> void:
 		return
 	var vp := get_viewport_rect().size
 	if event is InputEventScreenTouch:
+		_redraw_once = true   # a press/release always repaints once (button highlight)
 		var pos: Vector2 = event.position
 		if event.pressed:
 			_tapped = true
@@ -162,6 +169,10 @@ func _draw_button(center: Vector2, label: String, held: bool, col: Color) -> voi
 	draw_circle(center, BTN_R, Color(col.r, col.g, col.b, 0.18 if not held else 0.4))
 	draw_arc(center, BTN_R, 0.0, TAU, 32, Color(col.r, col.g, col.b, a), 4.0)
 	if _font:
-		var fs := 16
-		var tw := _font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
-		draw_string(_font, center + Vector2(-tw.x * 0.5, tw.y * 0.32), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.9))
+		var tl: TextLine = _labels.get(label)
+		if tl == null:
+			tl = TextLine.new()
+			tl.add_string(label, _font, 16)
+			_labels[label] = tl
+		var s := tl.get_size()
+		tl.draw(get_canvas_item(), center - s * 0.5, Color(1, 1, 1, 0.9))

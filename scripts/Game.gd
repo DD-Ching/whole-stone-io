@@ -14,6 +14,7 @@ signal rank_changed(rank: int, total: int)
 signal leaderboard_changed(entries: Array)   ## Array of {name, score, is_player, alive}
 signal player_died(final_score: int, rank: int)
 signal player_spawned()
+signal feed_event(text: String, gold: bool)   ## kill-feed / crown lines for the HUD
 
 # --- collision bits (kept here so every entity agrees) ---------------------------
 const L_FIGHTER := 1   ## bodies that can be hit / detected by weapons
@@ -62,11 +63,19 @@ const SWING_STAMINA_PER_TORQUE := 0.5        ## stamina per unit of applied whip
 const SLAM_STAMINA := 30.0
 const SPIN_STAMINA_RATE := 26.0
 
+# --- terrain water bands (normalized elevation t in 0..1) -------------------------
+const WATER_T := 0.16          ## below this you are IN water
+const COAST_T := 0.30          ## below this you are in the shallows
+const WATER_SLOW := 0.7        ## steering-speed multiplier in water (knockback unaffected —
+const COAST_SLOW := 0.85       ##  knocking a rival INTO a lake stays a legitimate setup)
+
 # --- run state -------------------------------------------------------------------
 var score := 0
 var best := 0
 var kills := 0
 var picking := false   ## true while the start weapon-picker overlay is up
+var player_mass := 1.0 ## the living player's mass — read by nameplate threat tints
+var fx: FxLayer        ## the single shared spark layer (set by Main at build time)
 
 const NAMES := [
 	"Percival", "Gawain", "Lancelot", "Bors", "Kay", "Bedivere", "Tristan",
@@ -124,6 +133,24 @@ static func health_for_mass(mass: float) -> float:
 ## Agility multiplier for the weapon: heavier => laggier, slower swing.
 static func agility_for_mass(mass: float) -> float:
 	return pow(mass, -0.22)
+
+# --- hit-stop ---------------------------------------------------------------------
+# One shared real-time deadline: overlapping stops EXTEND the freeze, the restore
+# timer ignores time_scale (or a KO during a stop would never unfreeze), and scale
+# never goes below 0.05 (delta-division code NaNs at 0).
+var _hitstop_deadline := 0.0
+
+## Freeze the game briefly — ONLY for player-involved moments (a global time_scale
+## freeze for an off-screen bot fight reads as a frame hitch, not as impact).
+func hitstop(scale: float, duration: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	_hitstop_deadline = maxf(_hitstop_deadline, now + duration)
+	Engine.time_scale = clampf(minf(Engine.time_scale, scale), 0.05, 1.0)
+	get_tree().create_timer(duration, true, false, true).timeout.connect(_hitstop_restore)
+
+func _hitstop_restore() -> void:
+	if Time.get_ticks_msec() / 1000.0 >= _hitstop_deadline - 0.005:
+		Engine.time_scale = 1.0
 
 ## Spawn a short floating label at a world position in the current scene.
 func popup(text: String, pos: Vector2, color: Color = Color.WHITE, scale := 1.0) -> void:

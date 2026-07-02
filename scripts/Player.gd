@@ -62,6 +62,11 @@ func _control(delta: float) -> void:
 	var swing := Input.is_action_pressed("attack") or (on_touch and tc.aim_active)
 	weapon.set_swinging(swing and not whirling and not weapon.is_busy())
 
+	# The spawn shield drops the moment you turn aggressor — an invulnerable attacker
+	# would be uncounterable. (Post-hit i-frames are 0.18s, so >0.4s can only be a shield.)
+	if (swing or whirling or weapon.state == Weapon.State.SLAM) and _invuln > 0.4 and not Game.picking:
+		_invuln = 0.4
+
 func _touch() -> TouchControls:
 	if _tc == null or not is_instance_valid(_tc):
 		_tc = get_tree().get_first_node_in_group("touch_controls") as TouchControls

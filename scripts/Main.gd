@@ -20,14 +20,18 @@ var _board_cd := 0.0
 var _crate_cd := CRATE_INTERVAL
 var _gem_cd := GEM_TOPUP_INTERVAL
 var _spawn_cd := 0.0
+var _bot_check_cd := 0.0
 var _awaiting_respawn := false
 var _picking := false
 var _chosen_weapon := Weapon.Type.STONE
+var _king: Fighter = null   ## current crown holder (hysteresis — see _update_crown)
 
 func _ready() -> void:
 	Game.reset_run()
 	_build_walls()
 	add_child(Terrain.new())          # contour heightfield + gravity gradient (draws under everything)
+	Game.fx = FxLayer.new()           # the single shared spark layer — every burst in the game draws here
+	add_child(Game.fx)
 	_seed_gems(Game.AMBIENT_GEMS)
 
 	player = Player.new()
@@ -86,7 +90,10 @@ func _process(delta: float) -> void:
 
 	if _spawn_cd > 0.0:
 		_spawn_cd -= delta
-	_maintain_bots()
+	_bot_check_cd -= delta
+	if _bot_check_cd <= 0.0:
+		_bot_check_cd = 0.5      # bot deaths are rare — no need to scan the group every frame
+		_maintain_bots()
 
 # --- spawning ---------------------------------------------------------------------
 
@@ -96,7 +103,7 @@ func _spawn_bot() -> void:
 	b.mass = start_mass
 	add_child(b)
 	b.spawn_setup(_rand_pos(), start_mass, Game.random_name(), Game.random_color())
-	b.weapon.set_type(_rand_weapon_type())
+	b.weapon.set_type(b.preferred_weapon)   # loadout matches temperament (hammer bots slam, etc.)
 	b.died.connect(_on_fighter_died)
 
 func _maintain_bots() -> void:
@@ -223,6 +230,7 @@ func _choose_weapon(t: int) -> void:
 		return
 	_chosen_weapon = t
 	player.weapon.set_type(t)
+	Sfx.play(&"chime", player.global_position, -4.0, 0.65)
 	Game.popup(player.weapon.type_name() + "!", player.global_position + Vector2(0, -player.body_radius - 24.0), Color(1, 0.9, 0.5), 1.2)
 	if _picking:
 		_picking = false
@@ -235,13 +243,16 @@ func _choose_weapon(t: int) -> void:
 
 func _update_leaderboard() -> void:
 	var list: Array = []
+	var alive: Array = []
 	for f in get_tree().get_nodes_in_group("fighter"):
 		if not is_instance_valid(f):
 			continue
 		var fi := f as Fighter
 		if fi == null or fi.is_dead():
 			continue
-		list.append({"name": fi.display_name, "score": int(round(fi.mass * 100.0)), "is_player": fi.is_player})
+		alive.append(fi)
+		list.append({"name": fi.display_name, "score": int(round(fi.mass * 100.0)),
+			"is_player": fi.is_player, "is_king": fi.is_king})
 	list.sort_custom(func(a, b): return a["score"] > b["score"])
 	Game.leaderboard_changed.emit(list)
 	var rank := 1
@@ -250,6 +261,36 @@ func _update_leaderboard() -> void:
 			rank = i + 1
 			break
 	Game.rank_changed.emit(rank, list.size())
+	_update_crown(alive)
+
+## Crown the arena's #1 — with hysteresis so it can't strobe between two even rivals:
+## a challenger only takes an EMPTY crown with a 1.15× lead over #2, and only usurps a
+## sitting king by outweighing THEM by 5%.
+func _update_crown(alive: Array) -> void:
+	if _king != null and (not is_instance_valid(_king) or _king.is_dead()):
+		_king = null
+	var top: Fighter = null
+	var second: Fighter = null
+	for fi in alive:
+		if top == null or fi.mass > top.mass:
+			second = top
+			top = fi
+		elif second == null or fi.mass > second.mass:
+			second = fi
+	var new_king := _king
+	if top != null:
+		if _king == null:
+			if second == null or top.mass >= second.mass * 1.15:
+				new_king = top
+		elif top != _king and top.mass > _king.mass * 1.05:
+			new_king = top
+	if new_king != _king:
+		if _king != null:
+			_king.set_king(false)
+		_king = new_king
+		if _king != null:
+			_king.set_king(true)
+			Game.feed_event.emit("%s is #1" % _king.display_name, _king.is_player)
 
 func _player_rank() -> int:
 	var rank := 1
