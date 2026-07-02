@@ -75,6 +75,10 @@ var _spin_clear := 0.0
 var _clash_cd := 0.0
 var _trail: Array = []
 var _overlap_weapons: Array = []   ## other weapons' hitboxes touching ours (event-driven, usually empty)
+var _swept_bodies: Array = []      ## fighters the head CROSSED between two ticks (anti-tunneling)
+var _swept_areas: Array = []       ## weapon hitboxes crossed between ticks (a block must never be skipped)
+var _clashed_now := false          ## a clash resolved this tick — the parry beats any same-tick swept hit
+var _sweep_query := PhysicsShapeQueryParameters2D.new()
 var _tracking_pickups := true
 var _draw_key := -999              ## quantized visual state — redraw only when it changes
 var _slam_flash := 0.0
@@ -132,6 +136,11 @@ func _ready() -> void:
 	add_child(_solid)
 	if _owner:
 		_solid.add_collision_exception_with(_owner)
+	# The anti-tunneling sweep probe: the same circle as the hitbox, fighters + weapons only.
+	_sweep_query.shape = _circle
+	_sweep_query.collide_with_areas = true
+	_sweep_query.collide_with_bodies = true
+	_sweep_query.collision_mask = Game.L_FIGHTER | Game.L_WEAPON
 	refresh_scale(_owner.mass if _owner else 1.0)
 	_head_dist = _arm_length
 	_head_world = _head_at()
@@ -219,6 +228,8 @@ func reset() -> void:
 	_hit_ids.clear()
 	_trail.clear()
 	_overlap_weapons.clear()   # a respawn teleport invalidates every tracked overlap
+	_swept_bodies.clear()
+	_swept_areas.clear()
 	_swinging = false
 	_head_speed = 0.0
 	_head_world = _head_at()
@@ -266,8 +277,12 @@ func _physics_process(delta: float) -> void:
 		_hitbox.position = Vector2(_head_dist, 0.0)
 	if _solid:
 		_solid.global_position = _head_at()   # drive the physical head (top_level) to the head world pos
-	_update_trail(delta)
-	_check_clash(delta)
+	var prev_head := _head_world
+	_update_trail(delta)                      # measure this tick's true head travel first...
+	_sweep_contacts(prev_head, _head_world)   # ...then sample the path it skipped (anti-tunneling)
+	_clashed_now = false
+	_check_clash(delta)                       # blocks resolve BEFORE swept hits: a parry beats a same-tick hit
+	_apply_swept_hits()
 	if _slam_flash > 0.0:
 		_slam_flash = maxf(0.0, _slam_flash - delta)
 
@@ -290,45 +305,106 @@ func _physics_process(delta: float) -> void:
 		_draw_key = key
 		queue_redraw()
 
+## ADAPTIVE anti-tunneling sweep: when the head moved further than its own radius in
+## one physics tick, sample the path it skipped — the faster it moved, the more samples
+## — so a lethal-speed head can never jump OVER a fighter it should have hit, or OVER
+## the weapon that should have BLOCKED it, between two ticks. Costs nothing at cruise
+## speed (zero samples); "higher Hz where the action is" without a global Hz hike.
+func _sweep_contacts(from: Vector2, to: Vector2) -> void:
+	_swept_bodies.clear()
+	_swept_areas.clear()
+	if _head_speed < Game.HIT_SPEED_MIN and state != State.SPIN:
+		return
+	var travel := from.distance_to(to)
+	var step := maxf(_head_radius * 0.8, 4.0)
+	if travel <= step:
+		return
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return
+	var n := mini(int(ceil(travel / step)) - 1, 8)
+	for i in range(n):
+		var t := float(i + 1) / float(n + 1)
+		_sweep_query.transform = Transform2D(0.0, from.lerp(to, t))
+		for hit in space.intersect_shape(_sweep_query, 8):
+			var c: Object = hit["collider"]
+			if c is Area2D:
+				var w := (c as Area2D).get_parent() as Weapon
+				if w != null and w != self and not _swept_areas.has(c):
+					_swept_areas.append(c)
+			elif c is Fighter and c != _owner and not _swept_bodies.has(c):
+				_swept_bodies.append(c)
+
+## Hits the sweep found that the overlap test never saw (the head crossed the body
+## between two ticks). Same rules and same re-bite bookkeeping as a normal hit.
+func _apply_swept_hits() -> void:
+	if _swept_bodies.is_empty() or _clashed_now:
+		return
+	if state != State.SPIN and _head_speed < Game.HIT_SPEED_MIN:
+		return
+	for body in _swept_bodies:
+		if body == _owner or not is_instance_valid(body):
+			continue
+		var id: int = body.get_instance_id()
+		if _hit_ids.has(id):
+			continue
+		if body is Fighter:
+			_hit_ids[id] = true
+			if state == State.SPIN:
+				_score_hit(body, maxf(_head_speed, SPIN_SPEED_REF), true)
+			else:
+				_score_hit(body, _head_speed, false)
+
 ## Two swung stones colliding: if their combined head speed is high enough, both bounce
-## off each other (reverse spin), the wielders are shoved apart, and a spark pops. Uses the
-## weapon's own L_WEAPON collision layer via get_overlapping_areas().
+## off each other (reverse spin), the wielders are shoved apart, and a spark pops. Checks
+## the event-tracked overlaps PLUS anything the sweep says we crossed this tick.
 func _check_clash(delta: float) -> void:
 	_clash_cd -= delta
-	if _overlap_weapons.is_empty() or _clash_cd > 0.0:
+	if _clash_cd > 0.0 or (_overlap_weapons.is_empty() and _swept_areas.is_empty()):
 		return
 	for i in range(_overlap_weapons.size() - 1, -1, -1):
-		var area: Area2D = _overlap_weapons[i]
-		if not is_instance_valid(area):
+		if not is_instance_valid(_overlap_weapons[i]):
 			_overlap_weapons.remove_at(i)   # its wielder died and was freed mid-overlap
-			continue
-		var ow := area.get_parent() as Weapon
+	for area in _overlap_weapons + _swept_areas:
+		var ow := (area as Area2D).get_parent() as Weapon
 		if ow == null or ow == self:
 			continue
-		if _head_speed + ow._head_speed < CLASH_SPEED:
-			continue
-		# Two pendulum heads collide — momentum transfer by effective mass (weapon mass × wielder
-		# size). The LIGHTER weapon bounces back harder (reverses more angular velocity) and its
-		# wielder is shoved further; a heavy hammer barely flinches when a light staff hits it.
-		var my_m := _effective_mass()
-		var ow_m := ow._effective_mass()
-		var my_share := ow_m / (my_m + ow_m + 0.001)
-		_avel = -_avel * (0.25 + 0.75 * my_share)
-		_clash_cd = 0.28
-		if _owner and ow._owner:
-			var dir := (_owner.global_position - ow._owner.global_position).normalized()
-			var shove := clampf(ow_m * (ow._head_speed + 200.0) / maxf(my_m, 0.05) * 0.02, 40.0, 320.0)
-			_owner.lunge(dir * shove)
-			_owner.on_hit_feedback(clampf(shove * 0.08, 8.0, 22.0), dir, false)
-			# Both weapons run this — the lower instance id emits the one shared spark/sound/popup.
-			if _owner.get_instance_id() < ow._owner.get_instance_id():
-				var mid := (_head_at() + ow._head_at()) * 0.5
-				Sfx.play(&"clash", mid, -2.0, Game.rng().randf_range(0.9, 1.12))
-				if Game.fx:
-					Game.fx.burst(mid, Color(1.0, 0.95, 0.8), 10, 420.0, 2.5)
-				if _owner.is_player or ow._owner.is_player:
-					Game.popup("CLASH!", mid + Vector2(0, -18), Color(1.0, 0.95, 0.7), 1.15)
-		break
+		if _try_clash(ow):
+			break
+
+## Symmetric resolution: BOTH sides react at once (the sweep may only be seen from one
+## side), one shared spark. Guarded by both cooldowns so it can never double-fire.
+func _try_clash(ow: Weapon) -> bool:
+	if _clash_cd > 0.0 or ow._clash_cd > 0.0:
+		return false
+	if _head_speed + ow._head_speed < CLASH_SPEED:
+		return false
+	_clash_react(ow)
+	ow._clash_react(self)
+	var mid := (_head_at() + ow._head_at()) * 0.5
+	Sfx.play(&"clash", mid, -2.0, Game.rng().randf_range(0.9, 1.12))
+	if Game.fx:
+		Game.fx.burst(mid, Color(1.0, 0.95, 0.8), 10, 420.0, 2.5)
+	if (_owner and _owner.is_player) or (ow._owner and ow._owner.is_player):
+		Game.popup("CLASH!", mid + Vector2(0, -18), Color(1.0, 0.95, 0.7), 1.15)
+	return true
+
+## This side's half of a clash — momentum transfer by effective mass (weapon mass ×
+## wielder size). The LIGHTER weapon bounces back harder (reverses more angular
+## velocity) and its wielder is shoved further; a heavy hammer barely flinches when a
+## light staff hits it.
+func _clash_react(ow: Weapon) -> void:
+	var my_m := _effective_mass()
+	var ow_m := ow._effective_mass()
+	var my_share := ow_m / (my_m + ow_m + 0.001)
+	_avel = -_avel * (0.25 + 0.75 * my_share)
+	_clash_cd = 0.28
+	_clashed_now = true
+	if _owner and ow._owner:
+		var dir := (_owner.global_position - ow._owner.global_position).normalized()
+		var shove := clampf(ow_m * (ow._head_speed + 200.0) / maxf(my_m, 0.05) * 0.02, 40.0, 320.0)
+		_owner.lunge(dir * shove)
+		_owner.on_hit_feedback(clampf(shove * 0.08, 8.0, 22.0), dir, false)
 
 func _on_weapon_area_entered(a: Area2D) -> void:
 	var w := a.get_parent() as Weapon
