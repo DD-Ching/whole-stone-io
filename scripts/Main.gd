@@ -99,25 +99,14 @@ func _process(delta: float) -> void:
 
 func _spawn_bot() -> void:
 	var b := Bot.new()
-	var start_mass := _bot_spawn_mass()
+	# Newcomers always spawn SMALL. (Leader-scaled spawns were tried and cancelled:
+	# the arena filled with giants, and dying after a good run left nothing playable.)
+	var start_mass: float = Game.START_MASS * Game.rng().randf_range(0.9, 1.6)
 	b.mass = start_mass
 	add_child(b)
 	b.spawn_setup(_rand_pos(), start_mass, Game.random_name(), Game.random_color())
 	b.weapon.set_type(b.preferred_weapon)   # loadout matches temperament (hammer bots slam, etc.)
 	b.died.connect(_on_fighter_died)
-
-## The arena grows WITH its king: newcomers spawn at a rolled fraction of the current
-## leader's size, so a giant is never left alone among minnows — there is always a
-## rival worth fearing (and worth hunting). Early game is untouched: the floor is the
-## old small-fry roll, and the scaling only bites once someone is actually big.
-func _bot_spawn_mass() -> float:
-	var top := Game.START_MASS
-	for f in get_tree().get_nodes_in_group("fighter"):
-		var fi := f as Fighter
-		if fi != null and is_instance_valid(fi) and not fi.is_dead():
-			top = maxf(top, fi.mass)
-	var floor_mass: float = Game.START_MASS * Game.rng().randf_range(0.9, 1.6)
-	return maxf(floor_mass, top * Game.rng().randf_range(0.18, 0.5))
 
 func _maintain_bots() -> void:
 	if _spawn_cd > 0.0:
